@@ -58,9 +58,9 @@ pipeline {
                     def jarFile = jarInfo.split('=')[1]
                     echo "JAR file pour Docker: ${jarFile}"
                     
-                    // Créer le Dockerfile
+                    // Créer le Dockerfile avec le nom d'image correct
                     writeFile file: 'Dockerfile', text: """
-FROM openjdk:17-alpine
+FROM openjdk:17-jdk-alpine
 COPY ${jarFile} app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
