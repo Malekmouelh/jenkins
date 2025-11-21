@@ -45,13 +45,10 @@ pipeline {
     steps {
         script {
             sh """
-                echo "📦 Copie du JAR dans le répertoire Docker..."
-                
-                # Crée un répertoire temporaire pour Docker build
+                echo "📦 Préparation du contexte Docker..."
                 mkdir -p docker-build
                 cp target/student-management-0.0.1-SNAPSHOT.jar docker-build/app.jar
                 
-                # Crée le Dockerfile dans le même répertoire
                 cat > docker-build/Dockerfile << EOF
 FROM eclipse-temurin:17-jre-alpine
 COPY app.jar app.jar
@@ -59,7 +56,7 @@ EXPOSE 8089
 ENTRYPOINT ["java", "-jar", "app.jar"]
 EOF
 
-                echo "✅ Dockerfile et JAR prêts dans docker-build/"
+                echo "✅ Contexte Docker prêt"
                 
                 # Build Docker depuis le répertoire docker-build
                 docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} docker-build
@@ -68,6 +65,7 @@ EOF
         }
     }
 }
+
 
 
         stage('Generate Docker Commands') {
