@@ -29,24 +29,28 @@ stages {
         }  
     }  
 
-    stage('Build Docker Image') {  
-        steps {  
-            script {  
-                def jarFile = sh(script: "find target -name '*.jar' | grep -v 'original' | head -1", returnStdout: true).trim()  
-                echo "JAR file pour Docker: ${jarFile}"  
+   stage('Build Docker Image') {  
+    steps {  
+        script {  
+            // Vérifie que le JAR est bien présent
+            sh 'ls -l target/'
 
-                writeFile file: 'Dockerfile', text: """  
+            // Récupère le JAR
+            def jarFile = sh(script: "find target -name '*.jar' | grep -v 'original' | head -1", returnStdout: true).trim()  
+            echo "JAR file pour Docker: ${jarFile}"  
 
-
+            // Crée le Dockerfile
+            writeFile file: 'Dockerfile', text: """
 FROM eclipse-temurin:17-jdk-alpine
 COPY ${jarFile} app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 """
-sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+            sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+        }  
+    }  
 }
-}
-}
+
 
 
     stage('Push to DockerHub') {  
