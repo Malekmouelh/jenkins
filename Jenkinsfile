@@ -1,65 +1,40 @@
 pipeline {
 agent any
 
-
-tools {
-    maven 'M2_HOME'
-}
-
+```
 environment {
-    MAVEN_HOME = "${tool 'M2_HOME'}"
-    PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
-    DOCKER_IMAGE = "sakaoli55/student-management"
-    DOCKER_TAG = "${env.BUILD_NUMBER}"
+    MVN_HOME = tool name: 'Maven 3', type: 'maven'
+    JAVA_HOME = tool name: 'JDK 17', type: 'jdk'
+    PATH = "${env.MVN_HOME}/bin:${env.JAVA_HOME}/bin:${env.PATH}"
+    DOCKERHUB_CREDENTIALS = credentials('dockerhub-id') // remplace par ton ID Jenkins pour DockerHub
 }
 
 stages {
-    stage('Checkout') {
+    stage('Checkout SCM') {
         steps {
-            git branch: 'main', url: 'https://github.com/Malekmouelh/jenkins.git'
+            checkout scm
         }
     }
-    
+
     stage('Test') {
         steps {
-            sh 'mvn test'
-        }
-        post {
-            always {
-                junit 'target/surefire-reports/*.xml'
-            }
+            sh "${MVN_HOME}/bin/mvn test"
         }
     }
-    
+
     stage('Package') {
         steps {
-            sh 'mvn clean package -DskipTests'
-        }
-        post {
-            success {
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
+            sh "${MVN_HOME}/bin/mvn clean package -DskipTests"
+            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
         }
     }
-    
+
     stage('Build Docker Image') {
         steps {
             script {
-                // Méthode alternative pour trouver le JAR
-                sh '''
-                    echo "=== Recherche du fichier JAR ==="
-                    ls -la target/
-                    JAR_FILE=$(ls target/*.jar | head -1)
-                    echo "Fichier JAR trouvé: $JAR_FILE"
-                    echo "JAR_FILE=${JAR_FILE}" > jar_info.txt
-                '''
-                
-                // Lire le nom du fichier JAR
-                def jarInfo = readFile('jar_info.txt').trim()
-                def jarFile = jarInfo.split('=')[1]
+                def jarFile = sh(script: "ls target/*.jar | head -1", returnStdout: true).trim()
                 echo "JAR file pour Docker: ${jarFile}"
-                
-                // Créer le Dockerfile avec le nom d'image correct
+
                 writeFile file: 'Dockerfile', text: """
 ```
 
@@ -68,69 +43,37 @@ COPY ${jarFile} app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 """
-// Afficher le Dockerfile pour vérification
-sh 'cat Dockerfile'
+sh "docker build -t sakaoli55/student-management:56 ."
+}
+}
+}
 
-
-                // Builder l'image Docker
-                sh """
-                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
-                """
-                
-                // Lister les images pour vérification
-                sh 'docker images'
-            }
-        }
-    }
-    
+```
     stage('Push to DockerHub') {
         steps {
             script {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh """
-                        echo "Login to DockerHub..."
-                        docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
-                        
-                        echo "Pushing image ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                        
-                        echo "Pushing image ${env.DOCKER_IMAGE}:latest"
-                        docker push ${env.DOCKER_IMAGE}:latest
-                        
-                        echo "✅ Images pushed successfully!"
-                    """
+                docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-id') {
+                    sh "docker push sakaoli55/student-management:56"
                 }
             }
         }
     }
-    
+
     stage('Cleanup') {
         steps {
-            sh '''
-                rm -f jar_info.txt Dockerfile || true
-                docker logout || true
-            '''
+            sh 'docker logout'
         }
     }
 }
 
 post {
     success {
-        echo "🎉 Pipeline réussi!"
-        echo "📦 Repository DockerHub: https://hub.docker.com/r/sakaoli55/student-management"
-        echo "🐳 Image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+        echo "✅ Pipeline terminé avec succès !"
     }
     failure {
-        echo '❌ Pipeline a échoué!'
-    }
-    always {
-        sh 'docker logout || true'
+        echo "❌ Pipeline a échoué !"
     }
 }
+```
 
 }
