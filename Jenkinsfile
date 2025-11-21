@@ -42,23 +42,33 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-            steps {
-                script {
-                    sh """
-                        echo "📄 Création du Dockerfile..."
-                        cat > Dockerfile << EOF
+    steps {
+        script {
+            sh """
+                echo "📦 Copie du JAR dans le répertoire Docker..."
+                
+                # Crée un répertoire temporaire pour Docker build
+                mkdir -p docker-build
+                cp target/student-management-0.0.1-SNAPSHOT.jar docker-build/app.jar
+                
+                # Crée le Dockerfile dans le même répertoire
+                cat > docker-build/Dockerfile << EOF
 FROM eclipse-temurin:17-jre-alpine
-COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
+COPY app.jar app.jar
 EXPOSE 8089
 ENTRYPOINT ["java", "-jar", "app.jar"]
 EOF
 
-                        echo "✅ Dockerfile créé avec succès"
-                        echo "🐳 Image prête pour le build manuel"
-                    """
-                }
-            }
+                echo "✅ Dockerfile et JAR prêts dans docker-build/"
+                
+                # Build Docker depuis le répertoire docker-build
+                docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} docker-build
+                docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+            """
         }
+    }
+}
+
 
         stage('Generate Docker Commands') {
             steps {
