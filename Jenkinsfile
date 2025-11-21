@@ -1,141 +1,127 @@
 pipeline {
     agent any
     
-    environment {
-        DOCKER_REGISTRY = "docker.io"
-        DOCKER_IMAGE_NAME = "syrine47/devopsproject"
-        DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
-        GIT_BRANCH = "main"
-        MAVEN_OPTS = "-Dhttp.connectionManager.timeout=60000 -Dhttp.socket.timeout=60000 -Dmaven.wagon.http.retryHandler.count=5"
-        JENKINS_HEARTBEAT = "-Dorg.jenkinsci.plugins.durabletask.BourneShellScript.HEARTBEAT_CHECK_INTERVAL=300"
-    }
-    
     tools {
         maven 'M2_HOME'
-        jdk 'JAVA_HOME'
     }
     
+    environment {
+        MAVEN_HOME = "${tool 'M2_HOME'}"
+        PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
+        DOCKER_IMAGE = "malekmouelhi7/student-management"
+        DOCKER_TAG = "${env.BUILD_NUMBER}"
+    }
+
     stages {
-        stage('🔍 Vérification de l\'environnement') {
+        stage('Checkout') {
             steps {
-                script {
-                    echo "=== Vérification Maven et Java ==="
-                    sh 'mvn --version'
-                    sh 'java -version'
-                    sh 'docker --version'
-                }
+                git branch: 'master', url: 'https://github.com/Malekmouelh/jenkins.git'
             }
         }
-        
-        stage('📥 Récupération du code') {
+
+        stage('Test') {
             steps {
-                echo ">>> Récupération du code depuis ${GIT_BRANCH}..."
-                git branch: "${GIT_BRANCH}", 
-                    url: 'https://github.com/syrine47/devopsproject.git'
-            }
-        }
-        
-        stage('📚 Cache des dépendances') {
-            steps {
-                echo ">>> Pré-téléchargement des dépendances en cache..."
-                sh '''
-                    mvn dependency:go-offline -q \
-                      -Dhttp.connectionManager.timeout=60000 \
-                      -Dhttp.socket.timeout=60000 \
-                      -Dmaven.wagon.http.retryHandler.count=5
-                '''
-            }
-        }
-        
-        stage('🧪 Tests unitaires') {
-            steps {
-                echo ">>> Lancement des tests Maven..."
-                sh '''
-                    mvn clean test \
-                      -Dhttp.connectionManager.timeout=60000 \
-                      -Dhttp.socket.timeout=60000 \
-                      -Dmaven.wagon.http.retryHandler.count=5
-                '''
+                sh 'mvn test'
             }
             post {
                 always {
-                    junit testResults: 'target/surefire-reports/*.xml', 
-                          allowEmptyResults: true
-                    echo "✅ Résultats de tests publiés"
+                    junit 'target/surefire-reports/*.xml'
                 }
             }
         }
-        
-        stage('📦 Build Maven (Package)') {
+
+        stage('Package') {
             steps {
-                echo ">>> Compilation et création du JAR..."
-                sh '''
-                    mvn clean package -DskipTests \
-                      -Dhttp.connectionManager.timeout=60000 \
-                      -Dhttp.socket.timeout=60000 \
-                      -Dmaven.wagon.http.retryHandler.count=5
-                '''
+                sh 'mvn clean package -DskipTests'
             }
-        }
-        
-        stage('📚 Archivage du livrable') {
-            steps {
-                echo ">>> Archivage du JAR..."
-                archiveArtifacts artifacts: 'target/*.jar', 
-                                  fingerprint: true,
-                                  allowEmptyArchive: false
-            }
-        }
-        
-        stage('🐳 Build Image Docker') {
-            steps {
-                script {
-                    echo ">>> Vérification de Docker..."
-                    sh 'docker --version'
-                    
-                    echo ">>> Construction de l'image Docker..."
-                    sh '''
-                        docker build \
-                          --tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} \
-                          --tag ${DOCKER_IMAGE_NAME}:latest \
-                          -f Dockerfile .
-                    '''
+            post {
+                success {
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
             }
         }
-        
-        stage('📋 Liste Images Docker') {
+
+        stage('Build Docker Image') {
             steps {
                 script {
-                    echo ">>> Images créées..."
-                    sh 'docker images | grep ${DOCKER_IMAGE_NAME}'
+                    sh """
+                        echo "📄 Création du Dockerfile..."
+                        cat > Dockerfile << EOF
+FROM eclipse-temurin:17-jre-alpine
+COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
+EXPOSE 8089
+ENTRYPOINT ["java", "-jar", "app.jar"]
+EOF
+
+                        echo "✅ Dockerfile créé avec succès"
+                        echo "🐳 Image prête pour le build manuel"
+                    """
                 }
             }
         }
-        
-        stage('✅ Test Image Docker') {
+
+        stage('Generate Docker Commands') {
             steps {
                 script {
-                    echo ">>> Inspect de l'image..."
-                    sh 'docker inspect ${DOCKER_IMAGE_NAME}:latest | head -20'
+                    // Générer un script de déploiement
+                    sh """
+                        cat > deploy-docker.sh << EOF
+#!/bin/bash
+echo "🐳 Building Docker image..."
+docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+
+echo "🔐 Login to DockerHub..."
+docker login -u malekmouelhi7
+
+echo "🚀 Pushing to DockerHub..."
+docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+docker push ${env.DOCKER_IMAGE}:latest
+
+echo "✅ Done! Image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+EOF
+
+                        chmod +x deploy-docker.sh
+                        echo "📜 Script de déploiement créé: deploy-docker.sh"
+                    """
                 }
             }
         }
     }
-    
+
     post {
         success {
-            echo "🎉 BUILD SUCCESS ✅"
-            echo "Image Docker créée : ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
-            echo "Commande pour lancer : docker run -p 8080:8080 ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+            echo """
+            🎉 BUILD RÉUSSI ! 🎉
+
+            Étapes manuelles restantes :
+
+            1. 📋 Copiez ces commandes ou exécutez le script :
+
+            docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+            docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+            docker login -u malekmouelhi7
+            docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+            docker push ${env.DOCKER_IMAGE}:latest
+
+            2. 🔗 Vérifiez sur DockerHub :
+            https://hub.docker.com/r/malekmouelhi7/student-management
+
+            3. 🐳 Pour tester l'image :
+            docker run -p 8089:8089 ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+            """
+
+            // Sauvegarder les commandes dans un artifact
+            sh """
+                echo 'docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .' > docker-commands.txt
+                echo 'docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest' >> docker-commands.txt
+                echo 'docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}' >> docker-commands.txt
+                echo 'docker push ${env.DOCKER_IMAGE}:latest' >> docker-commands.txt
+            """
+            archiveArtifacts artifacts: 'docker-commands.txt,deploy-docker.sh', fingerprint: true
         }
         failure {
-            echo "❌ BUILD FAILED"
-            echo "Consulte la console complète pour les détails"
-        }
-        always {
-            echo "Nettoyage..."
-            cleanWs()
+            echo '❌ Pipeline a échoué!'
         }
     }
 }
