@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 tools {
     maven 'M2_HOME'
 }
@@ -132,6 +132,5 @@ post {
         sh 'docker logout || true'
     }
 }
-```
 
 }
