@@ -47,20 +47,17 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
         }
 
         stage('Push to DockerHub') {  
-            when { 
-                anyOf { 
-                    branch 'main'; 
-                    branch 'master' 
-                } 
-            }  
-            steps {  
-                script {  
-                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-id') {  
-                        sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"  
-                    }  
-                }  
+    steps {  
+        script {  
+            docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-id') {  
+                sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"  
+                sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+                sh "docker push ${DOCKER_IMAGE}:latest"
             }  
         }  
+    }  
+}  
+  
     }  
 
     post {  
