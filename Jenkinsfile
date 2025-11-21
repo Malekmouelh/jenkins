@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 environment {
     MVN_HOME = tool name: 'Maven 3', type: 'maven'
     JAVA_HOME = tool name: 'JDK 17', type: 'jdk'
@@ -36,7 +36,6 @@ stages {
                 echo "JAR file pour Docker: ${jarFile}"
 
                 writeFile file: 'Dockerfile', text: """
-```
 
 FROM eclipse-temurin:17-jdk-alpine
 COPY ${jarFile} app.jar
@@ -48,7 +47,7 @@ sh "docker build -t sakaoli55/student-management:56 ."
 }
 }
 
-```
+
     stage('Push to DockerHub') {
         steps {
             script {
@@ -74,6 +73,6 @@ post {
         echo "❌ Pipeline a échoué !"
     }
 }
-```
+
 
 }
