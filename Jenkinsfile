@@ -6,7 +6,6 @@ environment {
     MVN_HOME = tool name: 'Maven 3', type: 'maven'
     JAVA_HOME = tool name: 'JDK 17', type: 'jdk'
     PATH = "${env.MVN_HOME}/bin:${env.JAVA_HOME}/bin:${env.PATH}"
-    DOCKERHUB_CREDENTIALS = credentials('dockerhub-id') // remplace par ton ID Jenkins pour DockerHub
 }
 
 stages {
@@ -37,6 +36,7 @@ stages {
 
                 writeFile file: 'Dockerfile', text: """
 
+
 FROM eclipse-temurin:17-jdk-alpine
 COPY ${jarFile} app.jar
 EXPOSE 8080
@@ -49,6 +49,18 @@ sh "docker build -t sakaoli55/student-management:56 ."
 
 
     stage('Push to DockerHub') {
+        when {
+            expression {
+                // Vérifie si le credential existe
+                def creds = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                    com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials.class,
+                    Jenkins.instance,
+                    null,
+                    null
+                )
+                return creds.find { it.id == 'dockerhub-id' } != null
+            }
+        }
         steps {
             script {
                 docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-id') {
@@ -60,7 +72,7 @@ sh "docker build -t sakaoli55/student-management:56 ."
 
     stage('Cleanup') {
         steps {
-            sh 'docker logout'
+            sh 'docker logout || true'
         }
     }
 }
