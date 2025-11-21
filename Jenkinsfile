@@ -71,7 +71,7 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 // Afficher le Dockerfile pour vérification
 sh 'cat Dockerfile'
 
-```
+
                 // Builder l'image Docker
                 sh """
                     docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
