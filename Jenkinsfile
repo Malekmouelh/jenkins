@@ -11,8 +11,8 @@ pipeline {
     }
     
     tools {
-        maven 'Maven-3'
-        jdk 'JDK-17'
+        maven 'M2_HOME'
+        jdk 'JAVA_HOME'
     }
     
     stages {
