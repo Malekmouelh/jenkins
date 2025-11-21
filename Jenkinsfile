@@ -1,131 +1,84 @@
 pipeline {
-agent any
+    agent any
 
-
-tools {
-    jdk 'JDK 17'
-    maven 'M2_HOME'
-}
-
-environment {
-    MAVEN_HOME = "${tool 'M2_HOME'}"
-    PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
-    DOCKER_IMAGE = "salsabil55/student-management"
-    DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.substring(0,7)}"
-    DOCKER_REGISTRY = "docker.io"
-}
-
-stages {
-    stage('Checkout') {
-        steps {
-            git branch: 'main', url: 'https://github.com/Malekmouelh/jenkins.git'
-        }
+    environment {
+        MVN_HOME = tool name: 'M2_HOME', type: 'maven'
+        PATH = "${env.MVN_HOME}/bin:${env.PATH}"
+        DOCKER_IMAGE = "sakaoli55/student-management"
+        DOCKER_TAG = "56"
     }
 
-    stage('Check Tools') {
-        steps {
-            sh "${MAVEN_HOME}/bin/mvn -v"
-            sh "${JAVA_HOME}/bin/java -version"
-        }
-    }
-
-    stage('Test') {
-        steps {
-            sh "${MAVEN_HOME}/bin/mvn test"
-        }
-        post {
-            always {
-                junit 'target/surefire-reports/*.xml'
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
             }
         }
-    }
 
-    stage('Package') {
-        steps {
-            sh "${MAVEN_HOME}/bin/mvn clean package -DskipTests"
+        stage('Test') {
+            steps {
+                sh "${MVN_HOME}/bin/mvn test"
+            }
         }
-        post {
-            success {
+
+        stage('Package') {
+            steps {
+                sh "${MVN_HOME}/bin/mvn clean package -DskipTests"
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                script {
-                    // Vérifier que le JAR existe
-                    def jarFiles = findFiles(glob: 'target/*.jar')
-                    if (jarFiles.length == 0) {
-                        error "❌ Aucun JAR trouvé dans target/"
-                    }
-                    env.JAR_FILE = jarFiles[0].name
-                    echo "JAR file: ${env.JAR_FILE}"
-                }
             }
         }
-    }
 
-    stage('Build Docker Image') {
-        steps {
-            script {
-                writeFile file: 'Dockerfile', text: """
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def jarFile = sh(script: "ls target/*.jar | head -1", returnStdout: true).trim()
+                    echo "JAR file pour Docker: ${jarFile}"
 
-FROM openjdk:17-alpine
-COPY target/${env.JAR_FILE} app.jar
-EXPOSE 8089
+                    writeFile file: 'Dockerfile', text: """
+FROM eclipse-temurin:17-jdk-alpine
+COPY ${jarFile} app.jar
+EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 """
-sh 'cat Dockerfile'
-
-                sh """
-                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
-                """
-
-                sh 'docker images | grep student-management'
-            }
-        }
-    }
-
-    stage('Push to DockerHub') {
-        steps {
-            script {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh """
-                        echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                        docker push ${env.DOCKER_IMAGE}:latest
-                    """
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
                 }
             }
         }
-    }
 
-    stage('Cleanup') {
-        steps {
-            script {
-                sh """
-                    docker rmi ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} || true
-                    docker rmi ${env.DOCKER_IMAGE}:latest || true
-                """
+        stage('Push to DockerHub') {
+            when {
+                expression {
+                    def creds = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+                        com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials.class,
+                        Jenkins.instance,
+                        null,
+                        null
+                    )
+                    return creds.find { it.id == 'dockerhub-id' } != null
+                }
+            }
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-id') {
+                        sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh 'docker logout || true'
             }
         }
     }
-}
 
-post {
-    success {
-        echo "✅ Pipeline réussi !"
-        echo "Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-        echo "Image latest: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest"
+    post {
+        success {
+            echo "✅ Pipeline terminé avec succès !"
+        }
+        failure {
+            echo "❌ Pipeline a échoué !"
+        }
     }
-    failure {
-        echo "❌ Pipeline a échoué !"
-    }
-    always {
-        sh 'docker logout || true'
-        sh 'rm -f Dockerfile || true'
-    }
-}
-
-
 }
