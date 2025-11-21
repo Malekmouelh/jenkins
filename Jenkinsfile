@@ -5,7 +5,7 @@ agent any
 environment {  
     MVN_HOME = tool name: 'M2_HOME', type: 'maven'  
     PATH = "${env.MVN_HOME}/bin:${env.PATH}"  
-    DOCKER_IMAGE = "sakaoli55/student-management"  
+    DOCKER_IMAGE = "malekmouelhi7/student-management"
     DOCKER_TAG = "${env.BUILD_NUMBER}" // Tag dynamique basé sur le numéro de build  
 }  
 
