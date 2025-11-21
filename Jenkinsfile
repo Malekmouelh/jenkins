@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 tools {
     jdk 'JDK 17'
     maven 'M2_HOME'
@@ -64,7 +64,6 @@ stages {
         steps {
             script {
                 writeFile file: 'Dockerfile', text: """
-```
 
 FROM openjdk:17-alpine
 COPY target/${env.JAR_FILE} app.jar
@@ -73,7 +72,6 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 """
 sh 'cat Dockerfile'
 
-```
                 sh """
                     docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
                     docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
@@ -128,6 +126,6 @@ post {
         sh 'rm -f Dockerfile || true'
     }
 }
-```
+
 
 }
