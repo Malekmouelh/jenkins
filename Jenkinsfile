@@ -3,7 +3,7 @@ agent any
 
 
 environment {
-    MVN_HOME = tool name: 'Maven 3', type: 'maven'
+    MVN_HOME = tool name: 'M2_HOME', type: 'maven'
     JAVA_HOME = tool name: 'JDK 17', type: 'jdk'
     PATH = "${env.MVN_HOME}/bin:${env.JAVA_HOME}/bin:${env.PATH}"
 }
