@@ -8,7 +8,7 @@ pipeline {
     environment {
         MAVEN_HOME = "${tool 'M2_HOME'}"
         PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
-        DOCKER_IMAGE = "salsabil55/student-management"
+        DOCKER_IMAGE = "malekmouelhi7/student-management"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
     }
 
