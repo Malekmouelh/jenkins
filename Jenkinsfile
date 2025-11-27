@@ -2,18 +2,17 @@ pipeline {
     agent any
 
     tools {
-        maven 'M2_HOME'
+        maven 'M2_HOME' // Assure-toi que ce Maven est configuré dans Jenkins
+        jdk 'JDK17'     // Assure-toi que JDK 17 est configuré
     }
 
     environment {
-        MAVEN_HOME = "${tool 'M2_HOME'}"
-        PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
         DOCKER_IMAGE = "malekmouelhi7/student-management"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
+        PATH = "${tool 'M2_HOME'}/bin:${env.PATH}"
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 git branch: 'master', url: 'https://github.com/Malekmouelh/jenkins.git'
@@ -42,34 +41,18 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Push Docker') {
             steps {
-                script {
+                withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo "🐳 Building Docker image..."
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                        docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
-                                     -t ${env.DOCKER_IMAGE}:latest \\
-                                     -f Dockerfile .
+                        echo "🐳 Build Docker image..."
+                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest .
 
-                        echo "✅ Docker image built"
-                    """
-                }
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    sh """
-                        echo "🔐 DockerHub Login..."
-                        docker login -u malekmouelhi7
-
-                        echo "📤 Pushing images..."
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                        docker push ${env.DOCKER_IMAGE}:latest
-
-                        echo "🚀 Docker images pushed"
+                        echo "📤 Push Docker image..."
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
                     """
                 }
             }
@@ -78,18 +61,10 @@ pipeline {
 
     post {
         success {
-            echo """
-            🎉 BUILD & DEPLOY OK !
-
-            ➤ Image poussée : ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-            ➤ Latest : ${env.DOCKER_IMAGE}:latest
-
-            Pour tester :
-              docker run -p 8089:8089 ${env.DOCKER_IMAGE}:latest
-            """
+            echo "✅ Tests OK, Docker image built and pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
         }
         failure {
-            echo '❌ Pipeline Failed.'
+            echo "❌ Pipeline failed!"
         }
     }
 }
