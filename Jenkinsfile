@@ -1,21 +1,21 @@
 pipeline {
     agent any
-
+    
     tools {
-        maven 'M2_HOME' // Assure-toi que ce Maven est configuré dans Jenkins
-        jdk 'JAVA_HOME'     // Assure-toi que JDK 17 est configuré
+        maven 'M2_HOME'
     }
-
+    
     environment {
+        MAVEN_HOME = "${tool 'M2_HOME'}"
+        PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
         DOCKER_IMAGE = "malekmouelhi7/student-management"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
-        PATH = "${tool 'M2_HOME'}/bin:${env.PATH}"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Compile') {
             steps {
-                git branch: 'master', url: 'https://github.com/Malekmouelh/jenkins.git'
+                sh 'mvn compile'
             }
         }
 
@@ -41,18 +41,32 @@ pipeline {
             }
         }
 
-        stage('Build & Push Docker') {
+        stage('Build Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                sh """
+                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -f- . << EOF
+FROM eclipse-temurin:17-jre-alpine
+COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
+EXPOSE 8089
+ENTRYPOINT ["java", "-jar", "app.jar"]
+EOF
+                    
+                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+                """
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
                     sh """
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-
-                        echo "🐳 Build Docker image..."
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest .
-
-                        echo "📤 Push Docker image..."
-                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                        docker push ${DOCKER_IMAGE}:latest
+                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                        docker push ${env.DOCKER_IMAGE}:latest
                     """
                 }
             }
@@ -61,10 +75,11 @@ pipeline {
 
     post {
         success {
-            echo "✅ Tests OK, Docker image built and pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            echo "Build ${env.BUILD_NUMBER} réussi!"
+            echo "Image Docker: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
         }
         failure {
-            echo "❌ Pipeline failed!"
+            echo 'Build échoué!'
         }
     }
 }
