@@ -3,7 +3,7 @@ pipeline {
 
     tools {
         maven 'M2_HOME' // Assure-toi que ce Maven est configuré dans Jenkins
-        jdk 'JDK17'     // Assure-toi que JDK 17 est configuré
+        jdk 'JAVA_HOME'     // Assure-toi que JDK 17 est configuré
     }
 
     environment {
