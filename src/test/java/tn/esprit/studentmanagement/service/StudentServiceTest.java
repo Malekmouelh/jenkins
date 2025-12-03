@@ -1,4 +1,4 @@
-package tn.esprit.studentmanagement.services;
+package tn.esprit.studentmanagement.service;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import tn.esprit.studentmanagement.entities.Student;
 import tn.esprit.studentmanagement.repositories.StudentRepository;
+import tn.esprit.studentmanagement.services.StudentService;
 
 import java.util.Arrays;
 import java.util.List;
