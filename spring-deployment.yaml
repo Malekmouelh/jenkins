@@ -3,35 +3,40 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: spring-app-config
+  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
 data:
-  DB_URL: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true"
+  # Ces clés ne sont plus utilisées mais on garde pour la compatibilité
+  DB_URL: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true"
   DB_USER: "root"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: spring-app-secret
+  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
 type: Opaque
 data:
-  DB_PASSWORD: ""  # Mot de passe vide en base64
+  DB_PASSWORD: "cGFzc3dvcmQ="  # "password" en base64
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: spring-app-pvc
+  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi  # Demande de stockage persistant
+      storage: 5Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: spring-boot-deployment
+  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
 spec:
-  replicas: 2
+  replicas: 1  # ⬅️ CHANGER À 1 POUR DEBUG (puis remettre à 2 après)
   selector:
     matchLabels:
       app: spring-boot-app
@@ -40,45 +45,43 @@ spec:
       labels:
         app: spring-boot-app
     spec:
-      # Désactiver le montage automatique du token de service account
-      automountServiceAccountToken: false
       containers:
         - name: spring-boot-container
-          # Utiliser un tag de version spécifique au lieu de "latest"
-          image: malekmouelhi7/student-management:v1.0.0  # ⬅️ REMPLACER par votre vraie version
+          # ⬅️ CHANGER PAR VOTRE VRAI TAG
+          image: malekmouelhi7/student-management:98
           ports:
             - containerPort: 8089
           resources:
             requests:
               memory: "512Mi"
               cpu: "250m"
-              ephemeral-storage: "1Gi"  # Demande de stockage temporaire
             limits:
               memory: "1Gi"
-              cpu: "500m"               # Limite de CPU
-              ephemeral-storage: "2Gi"  # Limite de stockage temporaire
+              cpu: "500m"
           volumeMounts:
             - name: app-storage
-              mountPath: /app/data       # Point de montage pour le stockage persistant
+              mountPath: /app/data
           env:
-            - name: spring.datasource.url
-              valueFrom:
-                configMapKeyRef:
-                  name: spring-app-config
-                  key: DB_URL
-            - name: spring.datasource.username
-              valueFrom:
-                configMapKeyRef:
-                  name: spring-app-config
-                  key: DB_USER
-            - name: spring.datasource.password
-              valueFrom:
-                secretKeyRef:
-                  name: spring-app-secret
-                  key: DB_PASSWORD
-            - name: server.port
+            # Configuration base de données
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: "password"
+
+            # Configuration JPA
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              value: "update"
+            - name: SPRING_JPA_SHOW_SQL
+              value: "true"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
+              value: "org.hibernate.dialect.MySQL8Dialect"
+
+            # Configuration serveur
+            - name: SERVER_PORT
               value: "8089"
-            - name: server.servlet.context-path
+            - name: SERVER_SERVLET_CONTEXT_PATH
               value: "/student"
       volumes:
         - name: app-storage
@@ -89,6 +92,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: spring-service
+  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
 spec:
   selector:
     app: spring-boot-app
