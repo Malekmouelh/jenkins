@@ -261,36 +261,43 @@ pipeline {
             echo "✅ Build ${env.BUILD_NUMBER} réussi !"
             echo "🔗 SonarQube: http://localhost:30090"
             echo "🔗 Application Spring: http://localhost:30080/student"
+
+            // CORRECTION ICI: Pas besoin de 'script' dans la section post
+            sh '''
+                echo "=== Récapitulatif ==="
+                export KUBECONFIG=/var/lib/jenkins/.kube/config
+                kubectl get pods,svc,deploy -n devops
+            '''
         }
         failure {
             echo '❌ Build échoué!'
-            script {
-                sh '''
-                    echo "=== Débogage ==="
-                    export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    echo "1. Tous les pods:"
-                    kubectl get pods -n devops
+            // CORRECTION ICI: Pas besoin de 'script' dans la section post
+            sh '''
+                echo "=== Débogage ==="
+                export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    echo "2. Logs SonarQube:"
-                    kubectl logs deployment/sonarqube-deployment -n devops --tail=50 2>/dev/null || true
+                echo "1. Tous les pods:"
+                kubectl get pods -n devops
 
-                    echo "3. Logs MySQL:"
-                    kubectl logs deployment/mysql-deployment -n devops --tail=50 2>/dev/null || true
+                echo "2. Logs SonarQube:"
+                kubectl logs deployment/sonarqube-deployment -n devops --tail=50 2>/dev/null || true
 
-                    echo "4. Logs Spring Boot:"
-                    kubectl logs deployment/spring-boot-deployment -n devops --tail=50 2>/dev/null || true
-                '''
-            }
+                echo "3. Logs MySQL:"
+                kubectl logs deployment/mysql-deployment -n devops --tail=50 2>/dev/null || true
+
+                echo "4. Logs Spring Boot:"
+                kubectl logs deployment/spring-boot-deployment -n devops --tail=50 2>/dev/null || true
+            '''
         }
         always {
-            script {
-                // Nettoyage optionnel des ressources SonarQube si nécessaire
-                // sh '''
-                //     kubectl delete -f sonarqube-deployment.yaml -n devops --ignore-not-found
-                //     kubectl delete -f sonarqube-service.yaml -n devops --ignore-not-found
-                // '''
-            }
+            // CORRECTION ICI: Pas besoin de 'script' dans la section post
+            sh '''
+                echo "=== Nettoyage optionnel ==="
+                # Nettoyage optionnel des ressources SonarQube si nécessaire
+                # kubectl delete -f sonarqube-deployment.yaml -n devops --ignore-not-found
+                # kubectl delete -f sonarqube-service.yaml -n devops --ignore-not-found
+            '''
         }
     }
 }
