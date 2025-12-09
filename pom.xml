@@ -155,15 +155,10 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.0.0-M5</version>
                 <configuration>
-                    <argLine>-Dfile.encoding=UTF-8 @{argLine} -XX:MaxPermSize=256m</argLine>
+                    <argLine>-Dfile.encoding=UTF-8 @{argLine}</argLine>
                     <systemPropertyVariables>
                         <file.encoding>UTF-8</file.encoding>
-                        <spring.profiles.active>test</spring.profiles.active>
                     </systemPropertyVariables>
-                    <includes>
-                        <include>**/*Test.java</include>
-                        <include>**/*Tests.java</include>
-                    </includes>
                 </configuration>
             </plugin>
         </plugins>
