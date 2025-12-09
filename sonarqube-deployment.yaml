@@ -24,6 +24,8 @@ spec:
               value: "sonar"
             - name: SONAR_JDBC_PASSWORD
               value: "sonar"
+            - name: SONAR_EMBEDDEDDATABASE_PORT
+              value: "9092"  # AJOUT IMPORTANT
             - name: SONAR_ES_BOOTSTRAP_CHECKS_DISABLE
               value: "true"
           resources:
@@ -44,13 +46,13 @@ spec:
             httpGet:
               path: /api/system/status
               port: 9000
-            initialDelaySeconds: 60
+            initialDelaySeconds: 300  # Augmenté à 5 minutes
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /api/system/status
               port: 9000
-            initialDelaySeconds: 60
+            initialDelaySeconds: 300  # Augmenté à 5 minutes
             periodSeconds: 30
       volumes:
         - name: sonarqube-data
