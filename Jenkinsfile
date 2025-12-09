@@ -24,7 +24,6 @@ pipeline {
                 script {
                     echo "=== Configuration et réparation de Kubernetes ==="
 
-                    // Solution 1: Essayer de démarrer Minikube
                     sh '''
                         echo "1. Vérification de l'état de Kubernetes..."
 
@@ -51,7 +50,6 @@ pipeline {
                         fi
                     '''
 
-                    // Solution 2: Configurer KUBECONFIG
                     sh '''
                         echo "2. Configuration de KUBECONFIG..."
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
@@ -67,7 +65,6 @@ pipeline {
                         kubectl version --client 2>&1 || echo "Échec version check"
                     '''
 
-                    // Solution 3: Créer un namespace simple (sans validation)
                     sh '''
                         echo "3. Création du namespace (sans validation)..."
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
@@ -77,7 +74,7 @@ pipeline {
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ${env.K8S_NAMESPACE}
+  name: ${K8S_NAMESPACE}
 EOF
                     '''
                 }
@@ -141,22 +138,24 @@ EOF
 
         stage('Build Docker') {
             steps {
-                sh """
-                    echo "=== Construction de l'image Docker ==="
+                sh '''
+                    echo "=== Construction de l\'image Docker ==="
 
                     # Vérifier que le JAR existe
-                    if [ ! -f "target/*.jar" ]; then
+                    if ls target/*.jar 1>/dev/null 2>&1; then
+                        echo "JAR trouvé"
+                    else
                         echo "❌ Aucun fichier JAR trouvé!"
                         ls -la target/
                         exit 1
                     fi
 
-                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
 
                     echo "Images Docker créées:"
-                    docker images | grep ${env.DOCKER_IMAGE}
-                """
+                    docker images | grep ${DOCKER_IMAGE}
+                '''
             }
         }
 
@@ -167,18 +166,18 @@ EOF
                     usernameVariable: 'DOCKER_USERNAME',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh """
+                    sh '''
                         echo "=== Push vers Docker Hub ==="
 
                         # Login
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                        echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
 
                         # Push des images
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} || echo "Push de la version taggée échoué"
-                        docker push ${env.DOCKER_IMAGE}:latest || echo "Push de latest échoué"
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG} || echo "Push de la version taggée échoué"
+                        docker push ${DOCKER_IMAGE}:latest || echo "Push de latest échoué"
 
                         echo "✅ Images Docker Hub mises à jour"
-                    """
+                    '''
                 }
             }
         }
@@ -232,7 +231,7 @@ services:
       retries: 5
 
   spring-app:
-    image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
     container_name: student-spring-app
     depends_on:
       mysql:
@@ -273,7 +272,7 @@ EOF
                         sleep 60
 
                         echo "=== État des conteneurs ==="
-                        docker-compose ps || docker ps --filter "name=student\|sonarqube" --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                        docker-compose ps || docker ps --filter "name=student" --filter "name=sonarqube" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
                         echo ""
                         echo "=== Accès aux services ==="
@@ -292,7 +291,7 @@ EOF
 
                     sh '''
                         echo "1. Vérification des conteneurs..."
-                        docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}" | grep -E "(sonarqube|student|mysql)" || echo "Aucun conteneur pertinent trouvé"
+                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "sonarqube|student|mysql" || echo "Aucun conteneur pertinent trouvé"
 
                         echo ""
                         echo "2. Vérification SonarQube..."
