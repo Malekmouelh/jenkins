@@ -6,9 +6,7 @@ pipeline {
     }
     
     environment {
-        DOCKER_IMAGE = 'malekmouelhi7
-
-/student-management'
+        DOCKER_IMAGE = 'malekmouelhi7/student-management'  // CORRECTION ICI
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'devops'
     }
@@ -16,7 +14,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main',
+                git branch: 'master',
                     url: 'https://github.com/Malekmouelh/jenkins.git'
             }
         }
@@ -81,7 +79,11 @@ pipeline {
                         echo "1. Déploiement de MySQL..."
                         kubectl apply -f mysql-deployment.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "2. Déploiement de Spring Boot..."
+                        echo "2. Mise à jour de l'image dans le deployment Spring..."
+                        # Mettre à jour l'image dans le deployment
+                        kubectl set image deployment/spring-boot-deployment spring-boot-container=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n ${env.K8S_NAMESPACE}
+
+                        # Appliquer les autres fichiers
                         kubectl apply -f spring-deployment.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "3. Attente des déploiements..."
@@ -108,7 +110,10 @@ pipeline {
                         echo "2. Services :"
                         kubectl get svc -n ${env.K8S_NAMESPACE}
 
-                        echo "3. Obtention de l'URL..."
+                        echo "3. Logs de l'application Spring..."
+                        kubectl logs deployment/spring-boot-deployment -n ${env.K8S_NAMESPACE} --tail=20
+
+                        echo "4. Obtention de l'URL..."
                         SERVICE_URL=\$(minikube service spring-service -n ${env.K8S_NAMESPACE} --url 2>/dev/null || echo "")
 
                         if [ -z "\$SERVICE_URL" ]; then
@@ -120,9 +125,9 @@ pipeline {
 
                         echo "URL de l'application: \$SERVICE_URL"
 
-                        echo "4. Test de l'application..."
-                        curl -s -f --max-time 30 "\$SERVICE_URL/student/actuator/health" || \
-                        curl -s -f --max-time 30 "\$SERVICE_URL/student" || \
+                        echo "5. Test de l'application..."
+                        curl -s -f --max-time 30 "\$SERVICE_URL/student/actuator/health" || \\
+                        curl -s -f --max-time 30 "\$SERVICE_URL/student" || \\
                         echo "L'application n'est pas encore prête"
                     """
                 }
@@ -141,6 +146,10 @@ pipeline {
                 export KUBECONFIG=/var/lib/jenkins/.kube/config
                 kubectl get all -n devops
                 kubectl describe pods -n devops
+                echo "=== Logs MySQL ==="
+                kubectl logs deployment/mysql-deployment -n devops --tail=50
+                echo "=== Logs Spring ==="
+                kubectl logs deployment/spring-boot-deployment -n devops --tail=50
             '''
         }
     }
