@@ -50,7 +50,7 @@ pipeline {
                         mvn sonar:sonar \
                             -Dsonar.projectKey=student-management \
                             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
-                    '''  # ← AJOUT de la propriété JaCoCo
+                    '''
                 }
             }
         }
