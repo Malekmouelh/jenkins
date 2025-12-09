@@ -30,11 +30,11 @@ spec:
               value: "true"
           resources:
             requests:
-              memory: "3Gi"  # Augmenter à 3Gi
-              cpu: "1"
+              memory: "2Gi"
+              cpu: "500m"
             limits:
               memory: "4Gi"
-              cpu: "2"
+              cpu: "1"
           volumeMounts:
             - name: sonarqube-data
               mountPath: /opt/sonarqube/data
