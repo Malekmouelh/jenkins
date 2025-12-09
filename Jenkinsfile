@@ -9,7 +9,7 @@ pipeline {
         DOCKER_IMAGE = 'malekmouelhi7/student-management'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'devops'
-        USE_DOCKER_COMPOSE = 'true'  # Forcer Docker Compose car Kubernetes a des problèmes
+        USE_DOCKER_COMPOSE = 'true'
     }
 
     stages {
@@ -25,17 +25,14 @@ pipeline {
                 script {
                     echo "=== Vérification de l'état de Kubernetes ==="
 
-                    // Essayer de vérifier si Minikube est réellement accessible
                     sh '''
                         echo "1. Vérification de Minikube..."
                         minikube status 2>&1 | head -20 || echo "Minikube non disponible"
 
                         echo "2. Vérification de l'accès réseau..."
-                        # Vérifier si nous pouvons atteindre l'IP de Minikube
                         MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "192.168.49.2")
                         echo "IP Minikube: $MINIKUBE_IP"
 
-                        # Tester la connectivité
                         timeout 5 curl -k https://$MINIKUBE_IP:8443/healthz 2>&1 | head -5 || echo "Connexion à Minikube impossible"
 
                         echo "3. Solution: Utilisation de Docker Compose à la place"
@@ -43,7 +40,6 @@ pipeline {
                         echo "   Nous allons utiliser Docker Compose qui est plus simple"
                     '''
 
-                    // Forcer l'utilisation de Docker Compose
                     env.USE_DOCKER_COMPOSE = 'true'
                 }
             }
@@ -64,18 +60,15 @@ pipeline {
                     sh '''
                         echo "=== Analyse SonarQube ==="
 
-                        # Vérifier que SonarQube est accessible
                         echo "Vérification de SonarQube..."
                         if curl -s -f http://localhost:9000/api/system/status > /dev/null; then
                             echo "✅ SonarQube est accessible"
                         else
                             echo "⚠ SonarQube n'est pas accessible, tentative de démarrage..."
-                            # Démarrer SonarQube si nécessaire
                             docker run -d --name sonarqube-temp -p 9000:9000 sonarqube:community 2>/dev/null || echo "SonarQube déjà en cours d'exécution"
                             sleep 30
                         fi
 
-                        # Exécuter l'analyse SonarQube
                         echo "Exécution de l'analyse SonarQube..."
                         mvn sonar:sonar \
                             -Dsonar.projectKey=student-management \
@@ -93,7 +86,6 @@ pipeline {
                 sh '''
                     echo "=== Création du package ==="
 
-                    # Sauvegarder les rapports
                     mkdir -p saved-reports
                     if [ -d "target/site/jacoco" ]; then
                         cp -r target/site/jacoco saved-reports/
@@ -102,7 +94,6 @@ pipeline {
                         echo "⚠ Pas de rapport JaCoCo à sauvegarder"
                     fi
 
-                    # Créer le JAR
                     mvn clean package -DskipTests
 
                     echo "Fichier créé:"
@@ -113,21 +104,20 @@ pipeline {
 
         stage('Build Docker') {
             steps {
-                sh """
+                sh '''
                     echo "=== Construction de l'image Docker ==="
 
-                    # Vérifier que le JAR existe
                     if [ ! -f "target/*.jar" ]; then
                         echo "Vérification des fichiers JAR..."
                         find target/ -name "*.jar" -type f | head -5
                     fi
 
-                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
 
                     echo "Images Docker créées:"
-                    docker images | grep ${env.DOCKER_IMAGE} || echo "Aucune image trouvée pour ${env.DOCKER_IMAGE}"
-                """
+                    docker images | grep ${DOCKER_IMAGE} || echo "Aucune image trouvée pour ${DOCKER_IMAGE}"
+                '''
             }
         }
 
@@ -138,18 +128,16 @@ pipeline {
                     usernameVariable: 'DOCKER_USERNAME',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh """
+                    sh '''
                         echo "=== Push vers Docker Hub ==="
 
-                        # Login
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                        echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
 
-                        # Push des images
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} || echo "⚠ Push de ${env.DOCKER_TAG} échoué (peut être normal si pas de réseau)"
-                        docker push ${env.DOCKER_IMAGE}:latest || echo "⚠ Push de latest échoué"
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG} || echo "⚠ Push de ${DOCKER_TAG} échoué"
+                        docker push ${DOCKER_IMAGE}:latest || echo "⚠ Push de latest échoué"
 
                         echo "✅ Tentative de push Docker Hub terminée"
-                    """
+                    '''
                 }
             }
         }
@@ -162,11 +150,9 @@ pipeline {
                     sh '''
                         echo "Arrêt des anciens conteneurs..."
 
-                        # Arrêter et supprimer les anciens conteneurs
                         docker stop student-spring-app student-mysql 2>/dev/null || true
                         docker rm student-spring-app student-mysql 2>/dev/null || true
 
-                        # Arrêter docker-compose si existant
                         docker-compose down 2>/dev/null || true
 
                         echo "Nettoyage terminé"
@@ -193,7 +179,7 @@ services:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: studentdb
     ports:
-      - "3307:3306"  # Utiliser un port différent pour éviter les conflits
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
@@ -221,7 +207,7 @@ services:
       SERVER_PORT: 8089
       SERVER_SERVLET_CONTEXT_PATH: /student
     ports:
-      - "8090:8089"  # Utiliser un port différent
+      - "8090:8089"
     networks:
       - student-network
     restart: on-failure
@@ -283,7 +269,6 @@ EOF
                             echo "   URL: http://localhost:8090/student"
                             echo "   Health: http://localhost:8090/student/actuator/health"
 
-                            # Tester quelques endpoints
                             echo "   Test des endpoints:"
                             curl -s http://localhost:8090/student/api/students 2>/dev/null | head -2 || echo "   Endpoint /students non accessible"
                         else
