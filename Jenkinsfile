@@ -9,6 +9,7 @@ pipeline {
         DOCKER_IMAGE = 'malekmouelhi7/student-management'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'devops'
+        SONAR_HOST = 'http://localhost:9000'
     }
 
     stages {
@@ -25,20 +26,15 @@ pipeline {
                     sh """
                         echo "=== Configuration de l'environnement ==="
 
-                        # Configurer Docker pour Jenkins
+                        # Vérifier Maven
+                        mvn --version || echo "⚠ Maven non disponible"
+
+                        # Configurer Docker
                         export DOCKER_HOST=unix:///var/run/docker.sock
 
-                        # Configurer kubectl
-                        mkdir -p /var/lib/jenkins/.kube 2>/dev/null || true
-
-                        # Essayer de copier la configuration depuis Minikube
-                        cp /root/.kube/config /var/lib/jenkins/.kube/config 2>/dev/null || echo "⚠ Impossible de copier la configuration Kubernetes"
-
-                        # Donner les permissions
-                        chown -R jenkins:jenkins /var/lib/jenkins/.kube 2>/dev/null || true
-
-                        # Créer le namespace
-                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - --validate=false 2>/dev/null || echo "Namespace déjà existant"
+                        # Vérifier les fichiers de test
+                        echo "Vérification des fichiers de configuration..."
+                        ls -la src/test/resources/ || echo "⚠ Pas de répertoire test/resources"
                     """
                 }
             }
@@ -46,21 +42,76 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                sh 'mvn clean verify'
+                script {
+                    sh """
+                        echo "=== Build & Test ==="
+
+                        # Nettoyer d'abord
+                        mvn clean
+
+                        # Compiler sans tests
+                        mvn compile -DskipTests
+
+                        # Exécuter les tests avec JaCoCo
+                        echo "Exécution des tests..."
+                        mvn test -Dspring.profiles.active=test
+
+                        # Vérifier les résultats
+                        echo "Vérification des résultats des tests..."
+                        if [ -f "target/surefire-reports/TEST-all.xml" ] || [ -f "target/surefire-reports/*.xml" ]; then
+                            echo "✅ Tests exécutés"
+                        else
+                            echo "⚠ Aucun rapport de test trouvé"
+                        fi
+
+                        # Vérifier JaCoCo
+                        echo "Vérification JaCoCo..."
+                        if [ -f "target/site/jacoco/jacoco.xml" ]; then
+                            echo "✅ Rapport JaCoCo généré"
+                            echo "📊 Fichier: target/site/jacoco/jacoco.xml"
+                        else
+                            echo "❌ Rapport JaCoCo NON généré"
+                            echo "Recherche des fichiers .exec..."
+                            find target -name "*.exec" 2>/dev/null || echo "Aucun fichier .exec"
+                        fi
+
+                        # Package final
+                        mvn package -DskipTests
+                    """
+                }
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    sh '''
-                        echo "=== Analyse SonarQube ==="
+                    script {
+                        sh """
+                            echo "=== Analyse SonarQube ==="
 
-                        # Essayer l'analyse SonarQube
-                        mvn sonar:sonar \
-                            -Dsonar.projectKey=student-management \
-                            -Dsonar.host.url=http://localhost:9000 2>/dev/null || echo "⚠ Analyse SonarQube partielle"
-                    '''
+                            # Vérifier si le rapport JaCoCo existe
+                            if [ -f "target/site/jacoco/jacoco.xml" ]; then
+                                echo "✅ Rapport JaCoCo disponible, lancement de SonarQube..."
+                                mvn sonar:sonar \
+                                    -Dsonar.projectKey=student-management \
+                                    -Dsonar.host.url=${SONAR_HOST} \
+                                    -Dsonar.login=admin \
+                                    -Dsonar.password=admin \
+                                    -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                            else
+                                echo "⚠ Rapport JaCoCo manquant, génération..."
+                                # Regénérer le rapport
+                                mvn jacoco:report
+
+                                # Essayer quand même SonarQube
+                                mvn sonar:sonar \
+                                    -Dsonar.projectKey=student-management \
+                                    -Dsonar.host.url=${SONAR_HOST} \
+                                    -Dsonar.login=admin \
+                                    -Dsonar.password=admin
+                            fi
+                        """
+                    }
                 }
             }
         }
@@ -70,8 +121,16 @@ pipeline {
                 sh """
                     echo "=== Construction de l'image Docker ==="
                     export DOCKER_HOST=unix:///var/run/docker.sock
-                    docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                    docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+
+                    # Vérifier que le JAR existe
+                    if [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ]; then
+                        echo "✅ JAR trouvé, construction de l'image..."
+                        docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+                        docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+                    else
+                        echo "❌ JAR non trouvé!"
+                        ls -la target/*.jar || echo "Aucun JAR dans target/"
+                    fi
                 """
             }
         }
@@ -87,7 +146,11 @@ pipeline {
                         echo "=== Push vers Docker Hub ==="
                         export DOCKER_HOST=unix:///var/run/docker.sock
                         echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} || echo "⚠ Push échoué, continuation..."
+
+                        # Vérifier l'image
+                        docker images | grep ${env.DOCKER_IMAGE} || echo "⚠ Image non trouvée localement"
+
+                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} || echo "⚠ Push tag échoué"
                         docker push ${env.DOCKER_IMAGE}:latest || echo "⚠ Push latest échoué"
                     """
                 }
@@ -100,27 +163,33 @@ pipeline {
                     sh """
                         echo "=== Déploiement sur Kubernetes ==="
 
-                        # Exporter la configuration
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+                        # Configuration temporaire
+                        export KUBECONFIG=/root/.kube/config
 
-                        echo "1. Déploiement des ressources..."
+                        echo "1. Vérification du cluster..."
+                        kubectl cluster-info || echo "⚠ Impossible de se connecter au cluster"
 
-                        # Appliquer tous les fichiers YAML disponibles
+                        echo "2. Création du namespace si nécessaire..."
+                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || echo "Namespace déjà existant ou erreur"
+
+                        echo "3. Déploiement des ressources..."
                         for file in *.yaml; do
                             if [ -f "\$file" ]; then
-                                echo "   - Déploiement de \$file"
-                                kubectl apply -f \$file -n ${env.K8S_NAMESPACE} --validate=false 2>/dev/null || echo "     ⚠ Erreur avec \$file"
+                                echo "   - Tentative avec \$file"
+                                # Ajouter le namespace au déploiement
+                                sed "s/namespace:.*/namespace: ${env.K8S_NAMESPACE}/g" "\$file" | kubectl apply -f - 2>/dev/null || \
+                                kubectl apply -f "\$file" -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "     ⚠ Échec avec \$file"
                             fi
                         done
 
-                        echo "2. Attente du démarrage..."
-                        sleep 30
+                        echo "4. Attente..."
+                        sleep 10
 
-                        echo "3. Vérification de l'état..."
-                        echo "   - Pods:"
-                        kubectl get pods -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "     ⚠ Impossible de vérifier les pods"
-                        echo "   - Services:"
-                        kubectl get svc -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "     ⚠ Impossible de vérifier les services"
+                        echo "5. État des pods:"
+                        kubectl get pods -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "   ⚠ Impossible d'obtenir les pods"
+
+                        echo "6. État des services:"
+                        kubectl get svc -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "   ⚠ Impossible d'obtenir les services"
                     """
                 }
             }
@@ -132,38 +201,50 @@ pipeline {
                     sh """
                         echo "=== VÉRIFICATION FINALE ==="
                         echo ""
-                        echo "✅ Tous les objectifs de l'atelier ont été atteints :"
+                        echo "📊 Résumé du build #${env.BUILD_NUMBER}:"
                         echo ""
-                        echo "1. ✅ Installation et configuration Kubernetes"
-                        echo "   - Namespace 'devops' créé"
-                        echo "   - Cluster Kubernetes prêt"
+
+                        # Vérifier les tests
+                        if [ -f "target/surefire-reports"/*.xml 2>/dev/null ]; then
+                            echo "✅ Tests exécutés"
+                        else
+                            echo "⚠ Tests non vérifiés"
+                        fi
+
+                        # Vérifier JaCoCo
+                        if [ -f "target/site/jacoco/jacoco.xml" ]; then
+                            echo "✅ Coverage généré"
+                        else
+                            echo "❌ Coverage NON généré"
+                        fi
+
+                        # Vérifier le JAR
+                        if [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ]; then
+                            echo "✅ Application packagée"
+                        else
+                            echo "❌ Application NON packagée"
+                        fi
+
                         echo ""
-                        echo "2. ✅ Application Spring Boot"
-                        echo "   - Tests exécutés : 32 tests réussis"
-                        echo "   - Application packagée : student-management-0.0.1-SNAPSHOT.jar"
-                        echo "   - Image Docker construite : ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                        echo "   - Image poussée sur Docker Hub"
+                        echo "🔗 URLs d'accès :"
+                        echo "   - SonarQube: http://localhost:9000"
+                        echo "   - Application: http://localhost:30080 (si déployée)"
                         echo ""
-                        echo "3. ✅ Déploiement sur Kubernetes"
-                        echo "   - MySQL déployé"
-                        echo "   - SonarQube déployé"
-                        echo "   - Spring Boot déployé"
-                        echo "   - Services exposés :"
-                        echo "     • SonarQube: http://localhost:30090"
-                        echo "     • Spring Boot: http://localhost:30080/student"
+                        echo "📦 Image Docker: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
                         echo ""
-                        echo "4. ✅ Intégration CI/CD"
-                        echo "   - Pipeline Jenkins exécuté"
-                        echo "   - Analyse SonarQube initiée"
-                        echo "   - Déploiement automatique sur K8S"
-                        echo ""
-                        echo "🎯 ATELIER COMPLÈTEMENT RÉUSSI !"
-                        echo ""
-                        echo "Détails techniques :"
-                        echo "- Build Jenkins: #${env.BUILD_NUMBER}"
-                        echo "- Image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                        echo "- Déploiement: Kubernetes namespace '${env.K8S_NAMESPACE}'"
-                        echo "- Tests: 32 tests exécutés avec succès"
+
+                        # Vérification finale
+                        echo "=== DIAGNOSTIC COVERAGE ==="
+                        if [ -f "target/site/jacoco/jacoco.xml" ]; then
+                            echo "✅ SUCCÈS: Coverage disponible pour SonarQube"
+                            echo "   Emplacement: target/site/jacoco/jacoco.xml"
+                        else
+                            echo "❌ ÉCHEC: Coverage non généré"
+                            echo "   Causes possibles:"
+                            echo "   1. Tests non exécutés"
+                            echo "   2. Problème de configuration H2"
+                            echo "   3. JaCoCo non configuré correctement"
+                        fi
                     """
                 }
             }
@@ -172,45 +253,61 @@ pipeline {
 
     post {
         always {
-            sh '''
-                echo "=== RÉSUMÉ DU BUILD ==="
-                echo "Build #${BUILD_NUMBER}"
+            script {
+                echo "=== RÉSUMÉ DU BUILD #${env.BUILD_NUMBER} ==="
                 echo "État: ${currentBuild.currentResult}"
-                echo ""
-                echo "✅ Objectifs atteints :"
-                echo "   - Déploiement Kubernetes"
-                echo "   - Pipeline CI/CD"
-                echo "   - Tests et qualité"
 
-                # Nettoyage
-                echo "Nettoyage des fichiers temporaires..."
-                docker system prune -f 2>/dev/null || true
-            '''
+                // Sauvegarder les logs de test
+                sh '''
+                    echo "📋 Logs disponibles:"
+                    echo "   - Tests: target/surefire-reports/"
+                    echo "   - Coverage: target/site/jacoco/"
+                    echo "   - Build: target/student-management-*.jar"
+
+                    # Nettoyage léger
+                    docker system prune -f 2>/dev/null || true
+                '''
+            }
         }
 
         success {
-            echo "🎉 FÉLICITATIONS ! L'atelier Kubernetes CI/CD est complété avec succès !"
-            echo "📊 Résumé :"
-            echo "   - Build: ${env.BUILD_NUMBER}"
-            echo "   - Image Docker: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-            echo "   - Applications déployées: MySQL, SonarQube, Spring Boot"
-            echo "   - Tests: 32 exécutés avec succès"
+            script {
+                echo "🎉 Build réussi!"
+                echo "📊 Prochaines étapes:"
+                echo "   1. Vérifier SonarQube: ${SONAR_HOST}"
+                echo "   2. Vérifier le coverage dans le rapport"
+                echo "   3. Tester l'application déployée"
+            }
         }
 
         failure {
-            echo '❌ Le build a échoué'
-            sh '''
-                echo "=== DÉBOGAGE ==="
-                echo "1. Docker:"
-                docker ps 2>/dev/null || echo "   ⚠ Docker non disponible"
-                echo ""
-                echo "2. Fichiers disponibles:"
-                ls -la *.yaml 2>/dev/null || echo "   ⚠ Aucun fichier YAML"
-                echo ""
-                echo "3. Fichiers Maven:"
-                [ -f "pom.xml" ] && echo "   ✅ pom.xml présent" || echo "   ⚠ pom.xml manquant"
-                [ -f "Dockerfile" ] && echo "   ✅ Dockerfile présent" || echo "   ⚠ Dockerfile manquant"
-            '''
+            script {
+                echo '❌ Build échoué'
+
+                sh '''
+                    echo "=== DÉBOGAGE DÉTAILLÉ ==="
+
+                    echo "1. Structure du projet:"
+                    find . -name "*.java" -type f | head -20
+                    echo ""
+
+                    echo "2. Fichiers de configuration:"
+                    ls -la src/main/resources/ 2>/dev/null || echo "   ⚠ Pas de main/resources"
+                    ls -la src/test/resources/ 2>/dev/null || echo "   ⚠ Pas de test/resources"
+                    echo ""
+
+                    echo "3. Résultats Maven:"
+                    ls -la target/ 2>/dev/null || echo "   ⚠ Pas de répertoire target"
+                    echo ""
+
+                    echo "4. Fichiers de test:"
+                    find . -name "*Test*.java" -type f
+                    echo ""
+
+                    echo "5. Logs récents:"
+                    tail -50 /var/log/jenkins/jenkins.log 2>/dev/null || echo "   ⚠ Logs Jenkins non accessibles"
+                '''
+            }
         }
     }
 }
