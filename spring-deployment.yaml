@@ -1,103 +1,68 @@
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: spring-app-config
-  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
+  name: spring-config
+  namespace: devops
 data:
-  # Ces clés ne sont plus utilisées mais on garde pour la compatibilité
-  DB_URL: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true"
-  DB_USER: "root"
+  DB_URL: "jdbc:mysql://mysql-service:3306/studentdb"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: spring-app-secret
-  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
+  name: spring-secret
+  namespace: devops
 type: Opaque
 data:
-  DB_PASSWORD: "cGFzc3dvcmQ="  # "password" en base64
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: spring-app-pvc
-  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
+  DB_USER: cm9vdA==  # root
+  DB_PASSWORD: cm9vdHBhc3N3b3Jk  # rootpassword
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: spring-boot-deployment
-  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
+  name: spring-app
+  namespace: devops
 spec:
-  replicas: 1  # ⬅️ CHANGER À 1 POUR DEBUG (puis remettre à 2 après)
+  replicas: 2
   selector:
     matchLabels:
-      app: spring-boot-app
+      app: spring-app
   template:
     metadata:
       labels:
-        app: spring-boot-app
+        app: spring-app
     spec:
       containers:
-        - name: spring-boot-container
-          # ⬅️ CHANGER PAR VOTRE VRAI TAG
-          image: malekmouelhi7/student-management:98
-          ports:
-            - containerPort: 8089
-          resources:
-            requests:
-              memory: "512Mi"
-              cpu: "250m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
-          volumeMounts:
-            - name: app-storage
-              mountPath: /app/data
+        - name: spring-app
+          image: malekmouelhi7/student-management:latest
           env:
-            # Configuration base de données
             - name: SPRING_DATASOURCE_URL
-              value: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+              valueFrom:
+                configMapKeyRef:
+                  name: spring-config
+                  key: DB_URL
             - name: SPRING_DATASOURCE_USERNAME
-              value: "root"
+              valueFrom:
+                secretKeyRef:
+                  name: spring-secret
+                  key: DB_USER
             - name: SPRING_DATASOURCE_PASSWORD
-              value: "password"
-
-            # Configuration JPA
-            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
-              value: "update"
-            - name: SPRING_JPA_SHOW_SQL
-              value: "true"
-            - name: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
-              value: "org.hibernate.dialect.MySQL8Dialect"
-
-            # Configuration serveur
-            - name: SERVER_PORT
-              value: "8089"
-            - name: SERVER_SERVLET_CONTEXT_PATH
-              value: "/student"
-      volumes:
-        - name: app-storage
-          persistentVolumeClaim:
-            claimName: spring-app-pvc
+              valueFrom:
+                secretKeyRef:
+                  name: spring-secret
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 8080
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: spring-service
-  namespace: devops  # ⬅️ AJOUTER CE NAMESPACE
+  namespace: devops
 spec:
   selector:
-    app: spring-boot-app
+    app: spring-app
   ports:
-    - port: 8089
-      targetPort: 8089
-      nodePort: 30080
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
   type: NodePort
