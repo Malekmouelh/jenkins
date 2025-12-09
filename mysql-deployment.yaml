@@ -43,7 +43,7 @@ spec:
           image: mysql:8
           env:
             - name: MYSQL_ROOT_PASSWORD
-              value: ""  # Mot de passe vide
+              value: "rootpassword"  # Mot de passe vide
             - name: MYSQL_DATABASE
               value: "studentdb"  # Base de données pour l'application Spring
           ports:

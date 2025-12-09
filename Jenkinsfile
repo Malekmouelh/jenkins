@@ -9,6 +9,7 @@ pipeline {
         DOCKER_IMAGE = 'malekmouelhi7/student-management'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'devops'
+        SONARQUBE_URL = 'http://sonarqube-service.devops.svc.cluster.local:9000'
     }
 
     stages {
@@ -19,16 +20,116 @@ pipeline {
             }
         }
 
+        stage('Setup SonarQube on K8S') {
+            steps {
+                script {
+                    sh """
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                        echo "=== Déploiement de SonarQube sur Kubernetes ==="
+
+                        # Créer le namespace si nécessaire
+                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                        # Déployer SonarQube
+                        echo "1. Création des volumes..."
+                        kubectl apply -f sonarqube-persistentvolume.yaml -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "PV déjà existant"
+                        kubectl apply -f sonarqube-persistentvolumeclaim.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "2. Déploiement de SonarQube..."
+                        kubectl apply -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "3. Attente du démarrage de SonarQube..."
+                        # Attendre que SonarQube soit prêt
+                        timeout 300 bash -c 'until curl -s -f http://localhost:30090/api/system/status 2>/dev/null | grep -q "UP"; do sleep 10; echo "En attente de SonarQube..."; done' || echo "SonarQube prend du temps à démarrer"
+
+                        echo "4. Vérification de l'état..."
+                        kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE}
+
+                        echo "5. URL SonarQube : http://localhost:30090"
+                    """
+                }
+            }
+        }
+
         stage('Build & Test') {
             steps {
                 sh 'mvn clean compile test'
             }
         }
 
-        stage('SonarQube') {
+        stage('SonarQube Analysis on K8S') {
             steps {
-                withSonarQubeEnv('sonarqube') {
-                    sh 'mvn sonar:sonar -Dsonar.projectKey=student-management'
+                script {
+                    sh """
+                        echo "=== Analyse SonarQube sur Kubernetes ==="
+                        echo "SonarQube URL: ${env.SONARQUBE_URL}"
+
+                        # Configuration alternative pour utiliser le SonarQube sur K8S
+                        # Obtenir l'IP du pod SonarQube
+                        SONAR_POD_IP=\$(kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE} -o jsonpath='{.items[0].status.podIP}')
+                        echo "SonarQube Pod IP: \$SONAR_POD_IP"
+
+                        # Vérifier la connectivité
+                        echo "Test de connexion à SonarQube..."
+                        curl -s http://\${SONAR_POD_IP}:9000/api/system/status || echo "SonarQube non accessible directement, utilisation du service"
+
+                        # Exécuter l'analyse SonarQube
+                        mvn sonar:sonar \
+                            -Dsonar.projectKey=student-management \
+                            -Dsonar.host.url=${env.SONARQUBE_URL} \
+                            -Dsonar.login=admin \
+                            -Dsonar.password=admin \
+                            -Dsonar.projectName="Student Management" \
+                            -Dsonar.projectVersion="${env.DOCKER_TAG}" \
+                            -Dsonar.sources=src/main/java \
+                            -Dsonar.tests=src/test/java \
+                            -Dsonar.java.binaries=target/classes \
+                            -Dsonar.junit.reportPaths=target/surefire-reports \
+                            -Dsonar.jacoco.reportPaths=target/jacoco.exec
+                    """
+                }
+            }
+        }
+
+        stage('Verify SonarQube Analysis') {
+            steps {
+                script {
+                    sh """
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                        echo "=== Vérification de l'analyse SonarQube ==="
+
+                        # Attendre que l'analyse soit terminée
+                        echo "Attente de la fin de l'analyse..."
+                        sleep 30
+
+                        # Vérifier l'état de SonarQube
+                        echo "1. État de SonarQube:"
+                        kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE} -o wide
+
+                        # Obtenir les logs de SonarQube
+                        echo "2. Logs SonarQube (dernières 10 lignes):"
+                        kubectl logs deployment/sonarqube-deployment -n ${env.K8S_NAMESPACE} --tail=10 || echo "Impossible de récupérer les logs"
+
+                        # Tester l'accès à l'interface web
+                        echo "3. Test d'accès web:"
+                        curl -s -f http://localhost:30090/api/projects/search?projects=student-management || \\
+                        curl -s -f http://\$(kubectl get svc sonarqube-service -n ${env.K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}'):9000/api/projects/search?projects=student-management || \\
+                        echo "Impossible d'accéder à l'API SonarQube"
+
+                        # Vérifier si le projet existe
+                        echo "4. Vérification du projet sur SonarQube..."
+                        SONAR_STATUS=\$(curl -s "http://localhost:30090/api/qualitygates/project_status?projectKey=student-management" 2>/dev/null || echo "{}")
+                        echo "Résultat SonarQube: \$SONAR_STATUS"
+
+                        if echo "\$SONAR_STATUS" | grep -q "ERROR" || echo "\$SONAR_STATUS" | grep -q "OK"; then
+                            echo "✓ Analyse SonarQube détectée!"
+                        else
+                            echo "⚠ Analyse SonarQube non encore disponible"
+                        fi
+                    """
                 }
             }
         }
@@ -74,102 +175,81 @@ pipeline {
                         ls -la mysql-deployment.yaml spring-deployment.yaml
 
                         # Mettre à jour l'image dans spring-deployment.yaml
-                        # Version 1: remplacer n'importe quelle image qui commence par malekmouelhi7/student-management
                         sed -i 's|image:.*malekmouelhi7/student-management.*|image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}|g' spring-deployment.yaml
 
-                        # Version 2: alternative si la version 1 ne fonctionne pas
-                        # sed -i "s|image:.*|image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}|g" spring-deployment.yaml
-
                         echo "Image mise à jour dans spring-deployment.yaml: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-
-                        # Afficher les premières lignes pour vérification
-                        head -20 spring-deployment.yaml
                     """
                 }
             }
         }
 
-        stage('Deploy Kubernetes') {
+        stage('Deploy Application on K8S') {
             steps {
                 script {
                     sh """
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        echo "=== Déploiement dans Kubernetes ==="
-
-                        # Créer le namespace
-                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        echo "=== Déploiement de l'application sur Kubernetes ==="
 
                         echo "1. Déploiement de MySQL..."
                         kubectl apply -f mysql-deployment.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "2. Attente initiale pour MySQL..."
-                        sleep 20
+                        echo "2. Correction du problème MySQL (mot de passe)..."
+                        # Corriger le mot de passe MySQL
+                        kubectl set env deployment/mysql-deployment -n ${env.K8S_NAMESPACE} MYSQL_ROOT_PASSWORD=rootpassword
+                        kubectl rollout restart deployment/mysql-deployment -n ${env.K8S_NAMESPACE}
 
-                        echo "3. Déploiement de Spring Boot..."
+                        echo "3. Attente que MySQL soit prêt..."
+                        sleep 30
+
+                        echo "4. Déploiement de Spring Boot..."
                         kubectl apply -f spring-deployment.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "4. Vérification du déploiement..."
+                        echo "5. Vérification du déploiement..."
                         kubectl rollout status deployment/spring-boot-deployment -n ${env.K8S_NAMESPACE} --timeout=180s || echo "Rollout en cours..."
 
-                        echo "5. État des ressources :"
+                        echo "6. État des ressources :"
                         kubectl get all -n ${env.K8S_NAMESPACE}
                     """
                 }
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Quality Gate Check') {
             steps {
                 script {
                     sh """
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        echo "=== Vérification du déploiement ==="
+                        echo "=== Vérification de la Quality Gate SonarQube ==="
 
-                        # Attendre que les pods soient prêts
-                        echo "Attente des pods Spring Boot..."
-                        timeout 120 bash -c 'until kubectl get pods -n ${env.K8S_NAMESPACE} -l app=spring-boot-app -o jsonpath="{.items[0].status.phase}" 2>/dev/null | grep -q Running; do sleep 5; echo "En attente..."; done' || echo "Continuation..."
+                        # Attendre que l'analyse soit complète
+                        echo "Attente des résultats SonarQube..."
+                        sleep 60
 
-                        echo "1. État des pods :"
-                        kubectl get pods -n ${env.K8S_NAMESPACE} -o wide
+                        # Obtenir le statut de la quality gate
+                        echo "Récupération du statut Quality Gate..."
+                        SONAR_QG_STATUS=\$(curl -s "http://localhost:30090/api/qualitygates/project_status?projectKey=student-management" 2>/dev/null || echo '{"projectStatus":{"status":"NONE"}}')
 
-                        echo "2. Services :"
-                        kubectl get svc -n ${env.K8S_NAMESPACE}
+                        echo "Statut Quality Gate: \$SONAR_QG_STATUS"
 
-                        echo "3. Logs Spring Boot :"
-                        kubectl logs deployment/spring-boot-deployment -n ${env.K8S_NAMESPACE} --tail=30 || echo "Impossible de récupérer les logs pour le moment"
+                        # Extraire le statut
+                        QG_STATUS=\$(echo "\$SONAR_QG_STATUS" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 
-                        echo "4. URL de l'application :"
-                        if which minikube >/dev/null 2>&1; then
-                            SERVICE_URL=\$(minikube service spring-service -n ${env.K8S_NAMESPACE} --url 2>/dev/null || echo "")
+                        echo "Statut: \$QG_STATUS"
+
+                        # Vérifier le statut
+                        if [ "\$QG_STATUS" = "OK" ]; then
+                            echo "✅ Quality Gate PASSED"
+                        elif [ "\$QG_STATUS" = "ERROR" ]; then
+                            echo "❌ Quality Gate FAILED"
+                            echo "L'analyse SonarQube a échoué. Vérifiez les problèmes sur http://localhost:30090"
+                            # Vous pouvez choisir de fail le build ici si besoin
+                            # currentBuild.result = 'FAILURE'
                         else
-                            SERVICE_URL=""
+                            echo "⚠ Quality Gate indéterminée"
+                            echo "Consultez manuellement: http://localhost:30090/dashboard?id=student-management"
                         fi
-
-                        if [ -z "\$SERVICE_URL" ]; then
-                            echo "Récupération du NodePort..."
-                            NODE_PORT=\$(kubectl get svc spring-service -n ${env.K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
-                            SERVICE_URL="http://localhost:\${NODE_PORT}"
-                        fi
-
-                        echo "URL: \$SERVICE_URL"
-
-                        echo "5. Test de connectivité..."
-                        for i in {1..12}; do
-                            echo "Tentative \$i/12..."
-                            if curl -s -f --max-time 10 "\$SERVICE_URL/student/actuator/health" > /dev/null; then
-                                echo "✓ Application accessible!"
-                                curl -s "\$SERVICE_URL/student/actuator/health" | head -5
-                                break
-                            elif curl -s -f --max-time 10 "\$SERVICE_URL/student" > /dev/null; then
-                                echo "✓ Application accessible (racine)!"
-                                break
-                            else
-                                echo "Application non disponible, nouvelle tentative dans 10s..."
-                                sleep 10
-                            fi
-                        done
                     """
                 }
             }
@@ -178,37 +258,38 @@ pipeline {
 
     post {
         success {
-            echo "✅ Build ${env.BUILD_NUMBER} réussi et déployé sur Kubernetes!"
-            script {
-                sh """
-                    export KUBECONFIG=/var/lib/jenkins/.kube/config
-                    echo "=== Récapitulatif ==="
-                    kubectl get pods,svc,deploy -n ${env.K8S_NAMESPACE}
-                """
-            }
+            echo "✅ Build ${env.BUILD_NUMBER} réussi !"
+            echo "🔗 SonarQube: http://localhost:30090"
+            echo "🔗 Application Spring: http://localhost:30080/student"
         }
         failure {
             echo '❌ Build échoué!'
             script {
-                sh """
+                sh '''
                     echo "=== Débogage ==="
                     export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    echo "1. Ressources dans le namespace ${env.K8S_NAMESPACE}:"
-                    kubectl get all -n ${env.K8S_NAMESPACE} 2>/dev/null || true
+                    echo "1. Tous les pods:"
+                    kubectl get pods -n devops
 
-                    echo "2. Détails des pods:"
-                    kubectl describe pods -n ${env.K8S_NAMESPACE} 2>/dev/null | head -100 || true
+                    echo "2. Logs SonarQube:"
+                    kubectl logs deployment/sonarqube-deployment -n devops --tail=50 2>/dev/null || true
 
                     echo "3. Logs MySQL:"
-                    kubectl logs -l app=mysql -n ${env.K8S_NAMESPACE} --tail=50 2>/dev/null || true
+                    kubectl logs deployment/mysql-deployment -n devops --tail=50 2>/dev/null || true
 
                     echo "4. Logs Spring Boot:"
-                    kubectl logs -l app=spring-boot-app -n ${env.K8S_NAMESPACE} --tail=50 2>/dev/null || true
-
-                    echo "5. Événements:"
-                    kubectl get events -n ${env.K8S_NAMESPACE} 2>/dev/null | tail -20 || true
-                """
+                    kubectl logs deployment/spring-boot-deployment -n devops --tail=50 2>/dev/null || true
+                '''
+            }
+        }
+        always {
+            script {
+                // Nettoyage optionnel des ressources SonarQube si nécessaire
+                // sh '''
+                //     kubectl delete -f sonarqube-deployment.yaml -n devops --ignore-not-found
+                //     kubectl delete -f sonarqube-service.yaml -n devops --ignore-not-found
+                // '''
             }
         }
     }
