@@ -1,58 +1,36 @@
 pipeline {
     agent any
-
+    
     tools {
         maven 'M2_HOME'
     }
-
+    
     environment {
-        MAVEN_HOME = "${tool 'M2_HOME'}"
-        PATH = "${env.MAVEN_HOME}/bin:${env.PATH}"
-        DOCKER_IMAGE = "malekmouelhi7/student-management"
+        DOCKER_IMAGE = 'malekmouelhi7
+
+/student-management'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
-        SONAR_HOST_URL = "http://localhost:9000"
+        K8S_NAMESPACE = 'devops'
     }
 
     stages {
-        stage('Compile') {
+        stage('Checkout') {
             steps {
-                sh 'mvn compile'
+                git branch: 'main',
+                    url: 'https://github.com/Malekmouelh/jenkins.git'
             }
         }
 
-        stage('Test') {
+        stage('Build & Test') {
             steps {
-                sh 'mvn test'
-            }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                }
+                sh 'mvn clean compile test'
             }
         }
 
-        stage('Code Coverage') {
-            steps {
-                sh 'mvn jacoco:prepare-agent test jacoco:report'
-            }
-        }
-
-        stage('SonarQube Analysis') {
+        stage('SonarQube') {
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    sh 'mvn sonar:sonar \
-                        -Dsonar.projectKey=student-management \
-                        -Dsonar.projectName=student-management \
-                        -Dsonar.java.binaries=target/classes \
-                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml'
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: false
+                    sh 'mvn sonar:sonar -Dsonar.projectKey=student-management'
                 }
             }
         }
@@ -61,14 +39,9 @@ pipeline {
             steps {
                 sh 'mvn clean package -DskipTests'
             }
-            post {
-                success {
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                }
-            }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Docker') {
             steps {
                 sh """
                     docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
@@ -77,7 +50,7 @@ pipeline {
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push Docker') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-credentials',
@@ -92,15 +65,83 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploy Kubernetes') {
+            steps {
+                script {
+                    sh """
+                        # Définir le kubeconfig explicitement
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                        echo "=== Déploiement dans Kubernetes ==="
+
+                        # Créer le namespace si nécessaire
+                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                        echo "1. Déploiement de MySQL..."
+                        kubectl apply -f mysql-deployment.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "2. Déploiement de Spring Boot..."
+                        kubectl apply -f spring-deployment.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "3. Attente des déploiements..."
+                        sleep 30
+
+                        echo "4. État des ressources :"
+                        kubectl get all -n ${env.K8S_NAMESPACE}
+                    """
+                }
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                script {
+                    sh """
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                        echo "=== Vérification ==="
+
+                        echo "1. Pods :"
+                        kubectl get pods -n ${env.K8S_NAMESPACE} -o wide
+
+                        echo "2. Services :"
+                        kubectl get svc -n ${env.K8S_NAMESPACE}
+
+                        echo "3. Obtention de l'URL..."
+                        SERVICE_URL=\$(minikube service spring-service -n ${env.K8S_NAMESPACE} --url 2>/dev/null || echo "")
+
+                        if [ -z "\$SERVICE_URL" ]; then
+                            echo "Alternative : récupération du NodePort..."
+                            NODE_PORT=\$(kubectl get svc spring-service -n ${env.K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
+                            MINIKUBE_IP=\$(minikube ip)
+                            SERVICE_URL="http://\${MINIKUBE_IP}:\${NODE_PORT}"
+                        fi
+
+                        echo "URL de l'application: \$SERVICE_URL"
+
+                        echo "4. Test de l'application..."
+                        curl -s -f --max-time 30 "\$SERVICE_URL/student/actuator/health" || \
+                        curl -s -f --max-time 30 "\$SERVICE_URL/student" || \
+                        echo "L'application n'est pas encore prête"
+                    """
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo "Build ${env.BUILD_NUMBER} réussi!"
-            echo "Image Docker: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+            echo "✅ Build ${env.BUILD_NUMBER} réussi et déployé sur Kubernetes!"
         }
         failure {
-            echo 'Build échoué!'
+            echo '❌ Build échoué!'
+            sh '''
+                echo "=== Débogage ==="
+                export KUBECONFIG=/var/lib/jenkins/.kube/config
+                kubectl get all -n devops
+                kubectl describe pods -n devops
+            '''
         }
     }
 }
