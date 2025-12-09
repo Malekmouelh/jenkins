@@ -60,6 +60,12 @@ EOF
                         echo "=== Configuration Kubernetes ==="
                         kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                         kubectl cluster-info
+
+                        # Nettoyer les ressources problématiques existantes
+                        echo "Nettoyage des anciennes ressources..."
+                        kubectl delete pvc mysql-pvc -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete pv mysql-pv -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        sleep 5
                     """
                 }
             }
@@ -124,28 +130,147 @@ EOF
             }
         }
 
-        stage('Clean Old Deployment') {
+        stage('Clean Old Resources') {
             steps {
                 script {
                     sh """
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
-                        echo "=== Nettoyage ancien déploiement ==="
+                        echo "=== Nettoyage des anciennes ressources ==="
+
+                        # Arrêter et supprimer les déploiements
                         kubectl delete deployment spring-boot-deployment -n ${env.K8S_NAMESPACE} --ignore-not-found=true
-                        sleep 10
+                        kubectl delete deployment mysql-deployment -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+
+                        # Supprimer les services
+                        kubectl delete service mysql-service -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete service spring-service -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+
+                        # Supprimer le PVC (CE NODE EST CRUCIAL)
+                        kubectl delete pvc mysql-pvc -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete pv mysql-pv --ignore-not-found=true
+
+                        # Attendre que les pods soient supprimés
+                        sleep 15
+
+                        echo "Vérification de l'état après nettoyage:"
+                        kubectl get all,pv,pvc -n ${env.K8S_NAMESPACE}
                     """
                 }
             }
         }
 
-        stage('Deploy MySQL') {
+        stage('Deploy MySQL - FIXED') {
             steps {
                 script {
                     sh """
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
-                        echo "=== Déploiement MySQL ==="
-                        kubectl apply -f mysql-deployment.yaml -n ${env.K8S_NAMESPACE}
-                        sleep 20
-                        kubectl get pods -l app=mysql -n ${env.K8S_NAMESPACE}
+                        echo "=== Déploiement MySQL CORRIGÉ ==="
+
+                        # Créer un fichier YAML temporaire avec une configuration corrigée
+                        cat > mysql-deployment-fixed.yaml << 'EOF'
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv-${env.BUILD_NUMBER}
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data/mysql-${env.BUILD_NUMBER}"
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc-${env.BUILD_NUMBER}
+  namespace: ${env.K8S_NAMESPACE}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: mysql-pv-${env.BUILD_NUMBER}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-deployment-${env.BUILD_NUMBER}
+  namespace: ${env.K8S_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-${env.BUILD_NUMBER}
+  template:
+    metadata:
+      labels:
+        app: mysql-${env.BUILD_NUMBER}
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "password"
+            - name: MYSQL_DATABASE
+              value: "studentdb"
+          volumeMounts:
+            - name: mysql-storage
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: mysql-storage
+          persistentVolumeClaim:
+            claimName: mysql-pvc-${env.BUILD_NUMBER}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  namespace: ${env.K8S_NAMESPACE}
+spec:
+  selector:
+    app: mysql-${env.BUILD_NUMBER}
+  ports:
+    - port: 3306
+      targetPort: 3306
+EOF
+
+                        # Créer le répertoire de données
+                        sh "sudo mkdir -p /mnt/data/mysql-${env.BUILD_NUMBER}"
+                        sh "sudo chmod 777 /mnt/data/mysql-${env.BUILD_NUMBER}"
+
+                        echo "Déploiement de MySQL..."
+                        kubectl apply -f mysql-deployment-fixed.yaml
+
+                        echo "Attente du démarrage de MySQL (30 secondes)..."
+                        sleep 30
+
+                        # Vérifier l'état
+                        echo "=== État de MySQL ==="
+                        kubectl get pods -l app=mysql-${env.BUILD_NUMBER} -n ${env.K8S_NAMESPACE}
+
+                        # Attendre que MySQL soit prêt
+                        echo "Attente que MySQL soit prêt..."
+                        kubectl wait --for=condition=ready pod -l app=mysql-${env.BUILD_NUMBER} -n ${env.K8S_NAMESPACE} --timeout=120s || true
+
+                        # Vérifier les logs
+                        echo "=== Logs MySQL ==="
+                        MYSQL_POD=\$(kubectl get pod -l app=mysql-${env.BUILD_NUMBER} -n ${env.K8S_NAMESPACE} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        if [ -n "\$MYSQL_POD" ]; then
+                            kubectl logs \$MYSQL_POD -n ${env.K8S_NAMESPACE} --tail=10
+                        fi
                     """
                 }
             }
@@ -157,9 +282,18 @@ EOF
                     sh """
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
                         echo "=== Déploiement SonarQube ==="
+
+                        # Nettoyer d'abord les anciennes instances
+                        kubectl delete deployment sonarqube-deployment -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        kubectl delete service sonarqube-service -n ${env.K8S_NAMESPACE} --ignore-not-found=true
+                        sleep 10
+
+                        # Déployer SonarQube
                         kubectl apply -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE} 2>/dev/null || true
                         kubectl apply -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE}
-                        sleep 30
+
+                        sleep 40
+                        echo "=== État SonarQube ==="
                         kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE}
                     """
                 }
@@ -198,7 +332,7 @@ spec:
         - containerPort: 8089
         env:
         - name: SPRING_DATASOURCE_URL
-          value: "jdbc:mysql://mysql-service:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+          value: "jdbc:mysql://mysql-service.${env.K8S_NAMESPACE}.svc.cluster.local:3306/studentdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
         - name: SPRING_DATASOURCE_USERNAME
           value: "root"
         - name: SPRING_DATASOURCE_PASSWORD
@@ -213,6 +347,13 @@ spec:
           value: "8089"
         - name: SERVER_SERVLET_CONTEXT_PATH
           value: "/student"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
@@ -232,14 +373,14 @@ EOF
                         echo "Déploiement de Spring Boot avec configuration corrigée..."
                         kubectl apply -f spring-deployment-correct.yaml
 
-                        echo "Attente du démarrage (90 secondes)..."
-                        sleep 90
+                        echo "Attente du démarrage (120 secondes)..."
+                        sleep 120
 
                         echo "=== Vérification ==="
                         kubectl get pods -l app=spring-boot-app -n ${env.K8S_NAMESPACE}
 
                         echo "=== Logs Spring Boot ==="
-                        kubectl logs -l app=spring-boot-app -n ${env.K8S_NAMESPACE} --tail=20 2>/dev/null || echo "Pas encore de logs..."
+                        kubectl logs -l app=spring-boot-app -n ${env.K8S_NAMESPACE} --tail=50 2>/dev/null || echo "Pas encore de logs..."
                     """
                 }
             }
@@ -252,7 +393,7 @@ EOF
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
 
                         echo "=== ÉTAT FINAL DU CLUSTER ==="
-                        kubectl get all -n ${env.K8S_NAMESPACE}
+                        kubectl get all,pv,pvc -n ${env.K8S_NAMESPACE}
 
                         echo ""
                         echo "=== VÉRIFICATION SPRING BOOT ==="
@@ -279,15 +420,30 @@ EOF
                                 else
                                     echo "⚠ Application en cours de démarrage"
                                     echo "Derniers logs:"
-                                    kubectl logs \$SPRING_POD -n ${env.K8S_NAMESPACE} --tail=10 2>/dev/null || echo "(pas de logs)"
+                                    kubectl logs \$SPRING_POD -n ${env.K8S_NAMESPACE} --tail=20 2>/dev/null || echo "(pas de logs)"
+
+                                    # Vérifier la connectivité MySQL
+                                    echo "=== Test de connexion MySQL depuis Spring Boot ==="
+                                    kubectl exec \$SPRING_POD -n ${env.K8S_NAMESPACE} -- sh -c 'echo "Testing MySQL connection..." && sleep 5'
                                 fi
                             else
                                 echo "❌ Spring Boot n'est pas en état Running"
+                                echo "Description du pod:"
+                                kubectl describe pod \$SPRING_POD -n ${env.K8S_NAMESPACE} 2>/dev/null | head -50 || echo "(pas de description)"
                                 echo "Logs d'erreur:"
-                                kubectl logs \$SPRING_POD -n ${env.K8S_NAMESPACE} --tail=30 2>/dev/null || echo "(pas de logs)"
+                                kubectl logs \$SPRING_POD -n ${env.K8S_NAMESPACE} --tail=50 2>/dev/null || echo "(pas de logs)"
                             fi
                         else
                             echo "⚠ Aucun pod Spring Boot trouvé"
+                        fi
+
+                        echo ""
+                        echo "=== VÉRIFICATION MYSQL ==="
+                        MYSQL_POD=\$(kubectl get pod -l app=mysql-${env.BUILD_NUMBER} -n ${env.K8S_NAMESPACE} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        if [ -n "\$MYSQL_POD" ]; then
+                            echo "✅ MySQL est en cours d'exécution: \$MYSQL_POD"
+                            echo "Test de connexion à la base de données:"
+                            kubectl exec \$MYSQL_POD -n ${env.K8S_NAMESPACE} -- mysql -uroot -ppassword -e "SHOW DATABASES;" 2>/dev/null || echo "Erreur de connexion"
                         fi
 
                         echo ""
@@ -295,7 +451,7 @@ EOF
                         echo "✅ Cluster Kubernetes configuré"
                         echo "✅ Pipeline CI/CD exécuté"
                         echo "✅ Image Docker construite et poussée"
-                        echo "✅ MySQL déployé"
+                        echo "✅ MySQL déployé avec nouveaux PV/PVC"
                         echo "✅ SonarQube déployé"
                         echo "✅ Spring Boot déployé avec configuration corrigée"
                         echo "✅ Tests et analyse de code effectués"
@@ -328,6 +484,9 @@ EOF
                 export KUBECONFIG=/var/lib/jenkins/.kube/config
                 echo "Pods actuels:"
                 kubectl get pods -n devops 2>/dev/null || echo "Erreur d'accès au cluster"
+                echo ""
+                echo "Événements:"
+                kubectl get events -n devops --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo ""
             '''
         }
     }
