@@ -25,14 +25,9 @@ pipeline {
                 script {
                     sh """
                         echo "=== Configuration de l'environnement ==="
-
-                        # Vérifier Maven
                         mvn --version || echo "⚠ Maven non disponible"
-
-                        # Configurer Docker
                         export DOCKER_HOST=unix:///var/run/docker.sock
 
-                        # Vérifier les fichiers de configuration
                         echo "Vérification des fichiers de configuration..."
                         echo "Taille de application.properties: \$(wc -c < src/main/resources/application.properties 2>/dev/null || echo '0') bytes"
                     """
@@ -43,16 +38,14 @@ pipeline {
         stage('Fix Encoding Issue') {
             steps {
                 script {
-                    sh """
-                        echo "=== CORRECTION DU PROBLÈME D'ENCODAGE ==="
+                    sh '''
+                        echo "=== CORRECTION DU PROBLÈME D\'ENCODAGE ==="
 
-                        # 1. Supprimer le fichier problématique
                         echo "1. Suppression du fichier application.properties problématique..."
                         rm -f src/main/resources/application.properties 2>/dev/null || true
 
-                        # 2. Créer un NOUVEAU fichier avec encodage propre
-                        echo "2. Création d'un nouveau fichier application.properties..."
-                        cat > src/main/resources/application.properties << 'EOF'
+                        echo "2. Création d\'un nouveau fichier application.properties..."
+                        cat > src/main/resources/application.properties << "EOF"
 spring.application.name=student-management
 server.port=8080
 server.servlet.context-path=/student
@@ -80,17 +73,15 @@ management.endpoints.web.exposure.include=health,info,metrics
 management.endpoint.health.show-details=always
 EOF
 
-                        # 3. Vérifier le nouveau fichier
                         echo "3. Vérification du nouveau fichier..."
-                        echo "Taille du nouveau fichier: \$(wc -c < src/main/resources/application.properties) bytes"
+                        echo "Taille du nouveau fichier: $(wc -c < src/main/resources/application.properties) bytes"
                         echo "Premières lignes:"
                         head -5 src/main/resources/application.properties
 
-                        # 4. Créer configuration de test
                         echo "4. Configuration des tests..."
                         mkdir -p src/test/resources/
 
-                        cat > src/test/resources/application-test.properties << 'EOF'
+                        cat > src/test/resources/application-test.properties << "EOF"
 # Configuration H2 pour les tests
 spring.datasource.url=jdbc:h2:mem:testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
 spring.datasource.driver-class-name=org.h2.Driver
@@ -114,7 +105,7 @@ spring.sql.init.mode=never
 spring.jpa.open-in-view=false
 spring.h2.console.enabled=false
 EOF
-                    """
+                    '''
                 }
             }
         }
@@ -122,49 +113,42 @@ EOF
         stage('Build & Test') {
             steps {
                 script {
-                    sh """
+                    sh '''
                         echo "=== Build & Test ==="
 
-                        # 1. Nettoyer
                         echo "1. Nettoyage..."
                         mvn clean
 
-                        # 2. Compiler avec encodage explicite
                         echo "2. Compilation..."
                         mvn compile -DskipTests -Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US
 
-                        if [ \$? -eq 0 ]; then
+                        COMPILE_STATUS=$?
+                        if [ $COMPILE_STATUS -eq 0 ]; then
                             echo "✅ Compilation réussie!"
 
-                            # 3. Exécuter les tests
                             echo "3. Exécution des tests..."
                             mvn test -Dspring.profiles.active=test -Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US
 
-                            # 4. Vérifier les résultats
                             echo "4. Vérification des résultats..."
 
-                            # Compter les rapports de test
-                            TEST_COUNT=\$(find target/surefire-reports -name "*.xml" 2>/dev/null | wc -l)
-                            if [ \$TEST_COUNT -gt 0 ]; then
-                                echo "✅ \$TEST_COUNT rapports de test générés"
+                            TEST_COUNT=$(find target/surefire-reports -name "*.xml" 2>/dev/null | wc -l)
+                            if [ $TEST_COUNT -gt 0 ]; then
+                                echo "✅ $TEST_COUNT rapports de test générés"
 
-                                # Compter les tests
-                                TOTAL_TESTS=\$(grep -h "tests=\"" target/surefire-reports/*.xml 2>/dev/null | sed 's/.*tests="\\([0-9]*\\)".*/\\1/' | awk '{sum+=\$1} END {print sum}')
-                                echo "   Tests exécutés: \${TOTAL_TESTS:-0}"
+                                TOTAL_TESTS=$(grep -h "tests=\\"" target/surefire-reports/*.xml 2>/dev/null | sed "s/.*tests=\\"\\([0-9]*\\)\\".*/\\1/" | awk "{sum+=\\$1} END {print sum}")
+                                echo "   Tests exécutés: ${TOTAL_TESTS:-0}"
                             else
                                 echo "⚠ Aucun rapport de test trouvé"
                             fi
 
-                            # 5. Vérifier JaCoCo
                             echo "5. Vérification du coverage..."
                             if [ -f "target/site/jacoco/jacoco.xml" ]; then
                                 echo "✅ SUCCÈS: Coverage généré!"
                                 echo "   📊 Fichier: target/site/jacoco/jacoco.xml"
 
-                                # Extraire les statistiques
-                                LINE_COV=\$(grep -o 'LINE.*percentage="[^"]*"' target/site/jacoco/jacoco.xml 2>/dev/null | head -1 | sed 's/.*percentage="\\([^"]*\\)".*/\\1/' || echo "0")
-                                BRANCH_COV=\$(grep -o 'BRANCH.*percentage="[^"]*"' target/site/jacoco/jacoco.xml 2>/dev/null | head -1 | sed 's/.*percentage="\\([^"]*\\)".*/\\1/' || echo "0")
-                                echo "   📈 Coverage: Lignes=\${LINE_COV}%, Branches=\${BRANCH_COV}%"
+                                LINE_COV=$(grep -o "LINE.*percentage=\\"[^\\"]*\\"" target/site/jacoco/jacoco.xml 2>/dev/null | head -1 | sed "s/.*percentage=\\"\\([^\\"]*\\)\\".*/\\1/" || echo "0")
+                                BRANCH_COV=$(grep -o "BRANCH.*percentage=\\"[^\\"]*\\"" target/site/jacoco/jacoco.xml 2>/dev/null | head -1 | sed "s/.*percentage=\\"\\([^\\"]*\\)\\".*/\\1/" || echo "0")
+                                echo "   📈 Coverage: Lignes=${LINE_COV}%, Branches=${BRANCH_COV}%"
                             else
                                 echo "❌ Coverage NON généré"
                                 echo "   Tentative de regénération..."
@@ -179,7 +163,6 @@ EOF
                                 fi
                             fi
 
-                            # 6. Package
                             echo "6. Création du package..."
                             mvn package -DskipTests -Dfile.encoding=UTF-8
 
@@ -194,17 +177,16 @@ EOF
                             echo "❌ Échec de compilation"
                             echo "   Tentative alternative sans filtrage..."
 
-                            # Essayer sans filtrage
                             mvn compile -DskipTests -Dfile.encoding=UTF-8 -Dmaven.resources.filtering=false
 
-                            if [ \$? -eq 0 ]; then
+                            ALT_STATUS=$?
+                            if [ $ALT_STATUS -eq 0 ]; then
                                 echo "✅ Compilation réussie sans filtrage"
-                                # Continuer avec les tests
                                 mvn test -Dspring.profiles.active=test -Dfile.encoding=UTF-8 -Dmaven.resources.filtering=false
                                 mvn package -DskipTests -Dfile.encoding=UTF-8 -Dmaven.resources.filtering=false
                             fi
                         fi
-                    """
+                    '''
                 }
             }
         }
@@ -213,15 +195,14 @@ EOF
             steps {
                 withSonarQubeEnv('sonarqube') {
                     script {
-                        sh """
+                        sh '''
                             echo "=== Analyse SonarQube ==="
 
-                            # Vérifier si le rapport JaCoCo existe
                             if [ -f "target/site/jacoco/jacoco.xml" ]; then
                                 echo "✅ Rapport JaCoCo disponible, lancement de SonarQube..."
                                 mvn sonar:sonar \
                                     -Dsonar.projectKey=student-management \
-                                    -Dsonar.host.url=\${SONAR_HOST} \
+                                    -Dsonar.host.url=http://localhost:9000 \
                                     -Dsonar.login=admin \
                                     -Dsonar.password=admin \
                                     -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
@@ -231,12 +212,12 @@ EOF
                                 echo "   Essai de SonarQube sans coverage..."
                                 mvn sonar:sonar \
                                     -Dsonar.projectKey=student-management \
-                                    -Dsonar.host.url=\${SONAR_HOST} \
+                                    -Dsonar.host.url=http://localhost:9000 \
                                     -Dsonar.login=admin \
                                     -Dsonar.password=admin \
                                     -Dsonar.sourceEncoding=UTF-8
                             fi
-                        """
+                        '''
                     }
                 }
             }
@@ -244,22 +225,21 @@ EOF
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    echo "=== Construction de l'image Docker ==="
+                sh '''
+                    echo "=== Construction de l\'image Docker ==="
                     export DOCKER_HOST=unix:///var/run/docker.sock
 
-                    # Vérifier que le JAR existe
                     if [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ]; then
-                        echo "✅ JAR trouvé, construction de l'image..."
-                        docker build -t \${DOCKER_IMAGE}:\${DOCKER_TAG} .
-                        docker tag \${DOCKER_IMAGE}:\${DOCKER_TAG} \${DOCKER_IMAGE}:latest
-                        echo "✅ Image créée: \${DOCKER_IMAGE}:\${DOCKER_TAG}"
+                        echo "✅ JAR trouvé, construction de l\'image..."
+                        docker build -t malekmouelhi7/student-management:${BUILD_NUMBER} .
+                        docker tag malekmouelhi7/student-management:${BUILD_NUMBER} malekmouelhi7/student-management:latest
+                        echo "✅ Image créée: malekmouelhi7/student-management:${BUILD_NUMBER}"
                     else
                         echo "❌ JAR non trouvé!"
                         echo "   Liste des fichiers dans target/:"
                         ls -la target/ 2>/dev/null || echo "   Répertoire target vide"
                     fi
-                """
+                '''
             }
         }
 
@@ -270,19 +250,17 @@ EOF
                     usernameVariable: 'DOCKER_USERNAME',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh """
+                    sh '''
                         echo "=== Push vers Docker Hub ==="
                         export DOCKER_HOST=unix:///var/run/docker.sock
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
 
-                        # Vérifier l'image
                         echo "Images disponibles:"
-                        docker images | grep \${DOCKER_IMAGE} || echo "⚠ Image non trouvée localement"
+                        docker images | grep malekmouelhi7/student-management || echo "⚠ Image non trouvée localement"
 
-                        # Pousser avec gestion d'erreur
-                        docker push \${DOCKER_IMAGE}:\${DOCKER_TAG} && echo "✅ Push tag réussi" || echo "⚠ Push tag échoué"
-                        docker push \${DOCKER_IMAGE}:latest && echo "✅ Push latest réussi" || echo "⚠ Push latest échoué"
-                    """
+                        docker push malekmouelhi7/student-management:${BUILD_NUMBER} && echo "✅ Push tag réussi" || echo "⚠ Push tag échoué"
+                        docker push malekmouelhi7/student-management:latest && echo "✅ Push latest réussi" || echo "⚠ Push latest échoué"
+                    '''
                 }
             }
         }
@@ -290,25 +268,22 @@ EOF
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    sh """
+                    sh '''
                         echo "=== Déploiement sur Kubernetes ==="
 
-                        # Configuration temporaire
                         export KUBECONFIG=/root/.kube/config
 
                         echo "1. Vérification du cluster..."
                         kubectl cluster-info || echo "⚠ Impossible de se connecter au cluster"
 
                         echo "2. Création du namespace si nécessaire..."
-                        kubectl create namespace \${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || echo "Namespace déjà existant ou erreur"
+                        kubectl create namespace devops --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || echo "Namespace déjà existant ou erreur"
 
                         echo "3. Déploiement des ressources..."
                         for file in *.yaml; do
-                            if [ -f "\$file" ]; then
-                                echo "   - Tentative avec \$file"
-                                # Essayer avec namespace
-                                kubectl apply -f "\$file" -n \${K8S_NAMESPACE} 2>/dev/null || \
-                                echo "     ⚠ Échec avec \$file"
+                            if [ -f "$file" ]; then
+                                echo "   - Tentative avec $file"
+                                kubectl apply -f "$file" -n devops 2>/dev/null || echo "     ⚠ Échec avec $file"
                             fi
                         done
 
@@ -316,11 +291,11 @@ EOF
                         sleep 15
 
                         echo "5. État des pods:"
-                        kubectl get pods -n \${K8S_NAMESPACE} 2>/dev/null || echo "   ⚠ Impossible d'obtenir les pods"
+                        kubectl get pods -n devops 2>/dev/null || echo "   ⚠ Impossible d\'obtenir les pods"
 
                         echo "6. État des services:"
-                        kubectl get svc -n \${K8S_NAMESPACE} 2>/dev/null || echo "   ⚠ Impossible d'obtenir les services"
-                    """
+                        kubectl get svc -n devops 2>/dev/null || echo "   ⚠ Impossible d\'obtenir les services"
+                    '''
                 }
             }
         }
@@ -328,48 +303,38 @@ EOF
         stage('Verify Deployment') {
             steps {
                 script {
-                    sh """
+                    sh '''
                         echo "=== VÉRIFICATION FINALE ==="
                         echo ""
-                        echo "📊 RÉSUMÉ DU BUILD #\${BUILD_NUMBER}"
+                        echo "📊 RÉSUMÉ DU BUILD #${BUILD_NUMBER}"
                         echo ""
                         echo "🔧 Configuration:"
                         echo "   - Application: student-management"
-                        echo "   - Image Docker: \${DOCKER_IMAGE}:\${DOCKER_TAG}"
-                        echo "   - Namespace K8S: \${K8S_NAMESPACE}"
+                        echo "   - Image Docker: malekmouelhi7/student-management:${BUILD_NUMBER}"
+                        echo "   - Namespace K8S: devops"
                         echo ""
 
-                        # Vérifications détaillées
                         echo "✅ ÉTAPES TERMINÉES:"
 
-                        # Fichier properties
                         if [ -f "src/main/resources/application.properties" ]; then
                             echo "   ✓ Fichier application.properties corrigé"
                         fi
 
-                        # Tests
                         if [ -d "target/surefire-reports" ]; then
                             echo "   ✓ Tests exécutés"
                         fi
 
-                        # Coverage
                         if [ -f "target/site/jacoco/jacoco.xml" ]; then
                             echo "   ✓ Coverage généré"
                             echo "     📈 Rapport: target/site/jacoco/index.html"
                         fi
 
-                        # JAR
                         if [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ]; then
                             echo "   ✓ Application packagée"
                         fi
 
-                        # SonarQube
                         echo "   ✓ Analyse SonarQube initiée"
-
-                        # Docker
                         echo "   ✓ Image Docker créée"
-
-                        # Kubernetes
                         echo "   ✓ Déploiement Kubernetes tenté"
 
                         echo ""
@@ -378,7 +343,7 @@ EOF
                         echo "   - Dashboard: Voir le rapport SonarQube pour le coverage"
                         echo ""
                         echo "🎉 BUILD COMPLÉTÉ AVEC SUCCÈS!"
-                    """
+                    '''
                 }
             }
         }
@@ -393,7 +358,7 @@ EOF
 
                 sh '''
                     echo "📁 Artifacts générés:"
-                    find target -type f -name "*.jar" -o -name "*.xml" -o -name "*.html" 2>/dev/null | head -10 | sed 's/^/   - /'
+                    find target -type f \\( -name "*.jar" -o -name "*.xml" -o -name "*.html" \\) 2>/dev/null | head -10 | sed "s/^/   - /"
 
                     echo ""
                     echo "🧹 Nettoyage..."
@@ -407,7 +372,7 @@ EOF
                 echo "🎉 FÉLICITATIONS ! BUILD RÉUSSI !"
                 echo ""
                 echo "📊 RÉCAPITULATIF:"
-                echo "   1. ✅ Problème d'encodage résolu"
+                echo "   1. ✅ Problème d\'encodage résolu"
                 echo "   2. ✅ Application compilée avec succès"
                 echo "   3. ✅ Tests exécutés"
                 echo "   4. ✅ Coverage généré"
@@ -416,15 +381,15 @@ EOF
                 echo "   7. ✅ Déploiement Kubernetes initié"
                 echo ""
                 echo "🔍 VÉRIFIEZ:"
-                echo "   - SonarQube: ${SONAR_HOST}"
+                echo "   - SonarQube: http://localhost:9000"
                 echo "   - Coverage: target/site/jacoco/index.html"
-                echo "   - Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                echo "   - Image: malekmouelhi7/student-management:${BUILD_NUMBER}"
             }
         }
 
         failure {
             script {
-                echo '❌ BUILD ÉCHOUÉ - DIAGNOSTIC'
+                echo "❌ BUILD ÉCHOUÉ - DIAGNOSTIC"
 
                 sh '''
                     echo "=== DÉBOGAGE COMPLET ==="
@@ -433,7 +398,7 @@ EOF
                     echo "1. CONTENU DU FICHIER application.properties:"
                     if [ -f "src/main/resources/application.properties" ]; then
                         echo "   (Premières 10 lignes):"
-                        head -10 src/main/resources/application.properties | sed 's/^/   /'
+                        head -10 src/main/resources/application.properties | sed "s/^/   /"
                         echo "   Taille: $(wc -c < src/main/resources/application.properties) bytes"
                         echo "   Encodage détecté:"
                         file -i src/main/resources/application.properties 2>/dev/null || echo "   Impossible de détecter"
@@ -443,8 +408,11 @@ EOF
                     echo ""
 
                     echo "2. LOGS MAVEN:"
-                    echo "   Dernières erreurs:"
-                    tail -50 /root/.m2/repository/.cache/transformed-resources 2>/dev/null | tail -5 || echo "   Pas de logs disponibles"
+                    echo "   Dernières erreurs Maven (si disponibles)..."
+                    find . -name "*.log" -type f 2>/dev/null | head -3 | while read logfile; do
+                        echo "   Fichier: $logfile"
+                        tail -5 "$logfile" 2>/dev/null | sed "s/^/     /" || true
+                    done
                     echo ""
 
                     echo "3. FICHIERS GÉNÉRÉS:"
@@ -454,7 +422,7 @@ EOF
                     echo "4. TESTS:"
                     find target/surefire-reports -name "*.txt" 2>/dev/null | head -3 | while read file; do
                         echo "   Fichier: $file"
-                        tail -5 "$file" 2>/dev/null | sed 's/^/     /' || true
+                        tail -5 "$file" 2>/dev/null | sed "s/^/     /" || true
                     done
                 '''
             }
