@@ -58,13 +58,13 @@ pipeline {
                     echo "🚀 Configuration Minikube..."
                     if ! minikube status | grep -q "host: Running"; then
                         echo "Démarrage de Minikube..."
-                        minikube start \
-                            --driver=docker \
-                            --cpus=2 \
-                            --memory=4096 \
-                            --disk-size=20g \
-                            --profile=${MINIKUBE_PROFILE} \
-                            --embed-certs=true \
+                        minikube start \\
+                            --driver=docker \\
+                            --cpus=2 \\
+                            --memory=4096 \\
+                            --disk-size=20g \\
+                            --profile=${MINIKUBE_PROFILE} \\
+                            --embed-certs=true \\
                             --container-runtime=docker
                     else
                         echo "Minikube est déjà en cours d'exécution"
@@ -119,8 +119,8 @@ pipeline {
 
                     # Vérification
                     if [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ]; then
-                        JAR_SIZE=$(ls -lh target/student-management-0.0.1-SNAPSHOT.jar | awk '{print $5}')
-                        echo "✅ Build réussi - JAR: ${JAR_SIZE}"
+                        JAR_SIZE=$(ls -lh target/student-management-0.0.1-SNAPSHOT.jar | awk '{print \$5}')
+                        echo "✅ Build réussi - JAR: \${JAR_SIZE}"
                     else
                         echo "❌ Échec: JAR non trouvé"
                         exit 1
@@ -138,8 +138,8 @@ pipeline {
                     # Vérifier le rapport JaCoCo
                     if [ -f "target/site/jacoco/jacoco.xml" ]; then
                         echo "📈 Rapport JaCoCo généré:"
-                        echo "   - HTML: file://${WORKSPACE}/target/site/jacoco/index.html"
-                        echo "   - XML:  ${WORKSPACE}/target/site/jacoco/jacoco.xml"
+                        echo "   - HTML: file://\${WORKSPACE}/target/site/jacoco/index.html"
+                        echo "   - XML:  \${WORKSPACE}/target/site/jacoco/jacoco.xml"
                     else
                         echo "⚠ Génération du rapport JaCoCo..."
                         mvn jacoco:report -q
@@ -152,14 +152,14 @@ pipeline {
                         withSonarQubeEnv('sonarqube') {
                             sh '''
                                 echo "🔍 Analyse SonarQube..."
-                                mvn sonar:sonar \
-                                    -Dsonar.projectKey=student-management-k8s \
-                                    -Dsonar.host.url=http://localhost:9000 \
-                                    -Dsonar.login=admin \
-                                    -Dsonar.password=admin \
-                                    -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                                    -Dsonar.java.binaries=target/classes \
-                                    -Dsonar.tests=src/test/java \
+                                mvn sonar:sonar \\
+                                    -Dsonar.projectKey=student-management-k8s \\
+                                    -Dsonar.host.url=http://localhost:9000 \\
+                                    -Dsonar.login=admin \\
+                                    -Dsonar.password=admin \\
+                                    -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \\
+                                    -Dsonar.java.binaries=target/classes \\
+                                    -Dsonar.tests=src/test/java \\
                                     -Dsonar.sourceEncoding=UTF-8
                             '''
                         }
@@ -190,14 +190,14 @@ DOCKERFILE
 
                     # Build de l'image
                     echo "🐳 Construction de l'image Docker..."
-                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                    docker build -t \${DOCKER_IMAGE}:\${DOCKER_TAG} .
+                    docker tag \${DOCKER_IMAGE}:\${DOCKER_TAG} \${DOCKER_IMAGE}:latest
 
                     # Vérification
                     echo "📦 Images Docker disponibles:"
-                    docker images | grep ${DOCKER_IMAGE}
+                    docker images | grep \${DOCKER_IMAGE}
 
-                    echo "✅ Image Docker construite: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    echo "✅ Image Docker construite: \${DOCKER_IMAGE}:\${DOCKER_TAG}"
                 '''
             }
         }
@@ -209,15 +209,15 @@ DOCKERFILE
                     echo "=== 5. DÉPLOIEMENT KUBERNETES ==="
 
                     # Créer le namespace
-                    echo "🏗️  Création du namespace ${K8S_NAMESPACE}..."
-                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                    echo "🏗️  Création du namespace \${K8S_NAMESPACE}..."
+                    kubectl create namespace \${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
                     # 1. Déploiement MySQL
                     echo "🗄️  Déploiement MySQL..."
                     if [ -f "mysql-deployment.yaml" ]; then
-                        kubectl apply -f mysql-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f mysql-deployment.yaml -n \${K8S_NAMESPACE}
                     elif [ -f "k8s/mysql-deployment.yaml" ]; then
-                        kubectl apply -f k8s/mysql-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/mysql-deployment.yaml -n \${K8S_NAMESPACE}
                     else
                         echo "❌ Fichier mysql-deployment.yaml non trouvé"
                         exit 1
@@ -225,17 +225,17 @@ DOCKERFILE
 
                     # Attendre que MySQL soit prêt
                     echo "⏳ Attente du démarrage de MySQL..."
-                    kubectl wait --for=condition=ready pod -l app=mysql -n ${K8S_NAMESPACE} --timeout=120s
+                    kubectl wait --for=condition=ready pod -l app=mysql -n \${K8S_NAMESPACE} --timeout=120s || true
 
                     # 2. Déploiement Spring Boot
                     echo "🚀 Déploiement Spring Boot..."
                     if [ -f "spring-deployment.yaml" ]; then
                         # Mettre à jour l'image dans le deployment
-                        sed -i "s|image:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|" spring-deployment.yaml
-                        kubectl apply -f spring-deployment.yaml -n ${K8S_NAMESPACE}
+                        sed -i "s|image:.*|image: \${DOCKER_IMAGE}:\${DOCKER_TAG}|" spring-deployment.yaml
+                        kubectl apply -f spring-deployment.yaml -n \${K8S_NAMESPACE}
                     elif [ -f "k8s/spring-deployment.yaml" ]; then
-                        sed -i "s|image:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|" k8s/spring-deployment.yaml
-                        kubectl apply -f k8s/spring-deployment.yaml -n ${K8S_NAMESPACE}
+                        sed -i "s|image:.*|image: \${DOCKER_IMAGE}:\${DOCKER_TAG}|" k8s/spring-deployment.yaml
+                        kubectl apply -f k8s/spring-deployment.yaml -n \${K8S_NAMESPACE}
                     else
                         echo "❌ Fichier spring-deployment.yaml non trouvé"
                         exit 1
@@ -260,94 +260,72 @@ DOCKERFILE
                     echo ""
                     echo "📊 ÉTAT DU CLUSTER:"
                     echo "=================="
-                    kubectl get all -n ${K8S_NAMESPACE}
+                    kubectl get all -n \${K8S_NAMESPACE}
 
                     # Vérifier les pods
                     echo ""
                     echo "🐳 PODS:"
                     echo "------"
-                    kubectl get pods -n ${K8S_NAMESPACE} -o wide
+                    kubectl get pods -n \${K8S_NAMESPACE} -o wide
 
                     # Vérifier les services
                     echo ""
                     echo "🔗 SERVICES:"
                     echo "----------"
-                    kubectl get svc -n ${K8S_NAMESPACE}
+                    kubectl get svc -n \${K8S_NAMESPACE}
 
                     # Vérifier les logs MySQL
                     echo ""
                     echo "📝 LOGS MySQL:"
                     echo "-------------"
-                    kubectl logs -n ${K8S_NAMESPACE} deployment/mysql --tail=5 || true
+                    kubectl logs -n \${K8S_NAMESPACE} deployment/mysql --tail=5 2>/dev/null || echo "Logs MySQL non disponibles"
 
                     # Vérifier les logs Spring Boot
                     echo ""
                     echo "📝 LOGS Spring Boot:"
                     echo "-------------------"
-                    kubectl logs -n ${K8S_NAMESPACE} deployment/spring-app --tail=10 || true
+                    kubectl logs -n \${K8S_NAMESPACE} deployment/spring-app --tail=10 2>/dev/null || echo "Logs Spring Boot non disponibles"
 
                     # Tester la connexion MySQL
                     echo ""
                     echo "🧪 TEST CONNEXION MySQL:"
                     echo "------------------------"
-                    kubectl exec -n ${K8S_NAMESPACE} deployment/mysql -- \
-                        mysql -u root -prootpassword -e "SHOW DATABASES;" 2>/dev/null || \
+                    kubectl exec -n \${K8S_NAMESPACE} deployment/mysql -- \\
+                        mysql -u root -prootpassword -e "SHOW DATABASES;" 2>/dev/null || \\
                         echo "⚠ Connexion MySQL en cours d'initialisation"
 
                     # Obtenir l'URL du service
                     echo ""
                     echo "🌐 URL D'ACCÈS:"
                     echo "--------------"
-                    if kubectl get svc spring-service -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
-                        NODE_PORT=$(kubectl get svc spring-service -n ${K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}')
-                        MINIKUBE_IP=$(minikube ip --profile=${MINIKUBE_PROFILE})
+                    if kubectl get svc spring-service -n \${K8S_NAMESPACE} >/dev/null 2>&1; then
+                        NODE_PORT=$(kubectl get svc spring-service -n \${K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "N/A")
+                        MINIKUBE_IP=$(minikube ip --profile=\${MINIKUBE_PROFILE} 2>/dev/null || echo "N/A")
                         echo "🌍 Application disponible à:"
-                        echo "   http://${MINIKUBE_IP}:${NODE_PORT}/student"
-                        echo "   http://${MINIKUBE_IP}:${NODE_PORT}/student/actuator/health"
+                        echo "   http://\${MINIKUBE_IP}:\${NODE_PORT}/student"
+                        echo "   http://\${MINIKUBE_IP}:\${NODE_PORT}/student/actuator/health"
 
                         # Test avec curl
                         echo ""
                         echo "🔍 TEST DE L'APPLICATION:"
                         echo "------------------------"
                         sleep 10
-                        curl -s "http://${MINIKUBE_IP}:${NODE_PORT}/student/actuator/health" || \
-                            echo "⚠ L'application n'est pas encore prête"
+                        if [ "\${NODE_PORT}" != "N/A" ] && [ "\${MINIKUBE_IP}" != "N/A" ]; then
+                            curl -s --max-time 10 "http://\${MINIKUBE_IP}:\${NODE_PORT}/student/actuator/health" || \\
+                                echo "⚠ L'application n'est pas encore prête ou le test a échoué"
+                        fi
                     else
-                        echo "⚠ Service non exposé"
+                        echo "⚠ Service non exposé ou non trouvé"
                     fi
 
                     # Vérifier les PersistentVolumes
                     echo ""
                     echo "💾 STOCKAGE:"
                     echo "-----------"
-                    kubectl get pv,pvc -n ${K8S_NAMESPACE} 2>/dev/null || echo "Aucun PV/PVC"
+                    kubectl get pv,pvc -n \${K8S_NAMESPACE} 2>/dev/null || echo "Aucun PV/PVC trouvé"
 
                     echo ""
                     echo "✅ Vérifications terminées"
-                '''
-            }
-        }
-
-        // ÉTAPE 7: NETTOYAGE (optionnel)
-        stage('Nettoyage') {
-            when {
-                expression { params.CLEANUP_AFTER_BUILD == true }
-            }
-            steps {
-                sh '''
-                    echo "=== 7. NETTOYAGE ==="
-
-                    # Supprimer les déploiements (garder le namespace)
-                    echo "🧹 Nettoyage des déploiements..."
-                    kubectl delete deployment --all -n ${K8S_NAMESPACE} --wait=false
-                    kubectl delete service --all -n ${K8S_NAMESPACE} --wait=false
-                    kubectl delete configmap --all -n ${K8S_NAMESPACE} --wait=false
-                    kubectl delete secret --all -n ${K8S_NAMESPACE} --wait=false
-
-                    # Garder le PVC pour conserver les données
-                    echo "💾 Conservation des PVC pour les données persistantes"
-
-                    echo "✅ Nettoyage effectué"
                 '''
             }
         }
@@ -374,7 +352,7 @@ DOCKERFILE
                 echo ""
                 echo "🔍 ÉTAT FINAL KUBERNETES:"
                 echo "------------------------"
-                kubectl get pods -n ${K8S_NAMESPACE} 2>/dev/null || echo "Namespace non disponible"
+                kubectl get pods -n ${K8S_NAMESPACE} 2>/dev/null || echo "Namespace non disponible ou pods non trouvés"
 
                 # Accès
                 echo ""
@@ -395,9 +373,9 @@ DOCKERFILE
                 echo ""
                 echo "📁 FICHIERS GÉNÉRÉS:"
                 echo "------------------"
-                [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ] && \
+                [ -f "target/student-management-0.0.1-SNAPSHOT.jar" ] && \\
                     echo "✅ target/student-management-*.jar"
-                [ -f "target/site/jacoco/jacoco.xml" ] && \
+                [ -f "target/site/jacoco/jacoco.xml" ] && \\
                     echo "✅ Rapport coverage: target/site/jacoco/"
 
                 # Commandes utiles
@@ -405,33 +383,28 @@ DOCKERFILE
                 echo "🛠️  COMMANDES UTILES:"
                 echo "-------------------"
                 echo "• Voir les logs: kubectl logs -n ${K8S_NAMESPACE} deployment/spring-app -f"
-                echo "• Accéder à MySQL: kubectl exec -n ${K8S_NAMESPACE} deployment/mysql -- mysql -u root -p"
+                echo "• Accéder à MySQL: kubectl exec -n ${K8S_NAMESPACE} deployment/mysql -it -- mysql -u root -p"
                 echo "• Supprimer tout: kubectl delete namespace ${K8S_NAMESPACE}"
                 echo "• Dashboard: minikube dashboard --profile=${MINIKUBE_PROFILE}"
             '''
-
-            // Nettoyage workspace (optionnel)
-            script {
-                if (params.CLEAN_WORKSPACE) {
-                    cleanWs()
-                }
-            }
         }
 
         success {
-            echo """
-            🎉 ATELIER RÉUSSI ! 🎉
+            script {
+                echo """
+                🎉 ATELIER RÉUSSI ! 🎉
 
-            ✅ Tous les objectifs atteints:
-            1. ✅ Cluster Kubernetes installé (Minikube)
-            2. ✅ Application Spring Boot + MySQL déployée
-            3. ✅ Pipeline CI/CD intégré
-            4. ✅ Services exposés et testés
-            5. ✅ Stockage persistant configuré
-            6. ✅ Qualité du code vérifiée
+                ✅ Tous les objectifs atteints:
+                1. ✅ Cluster Kubernetes installé (Minikube)
+                2. ✅ Application Spring Boot + MySQL déployée
+                3. ✅ Pipeline CI/CD intégré
+                4. ✅ Services exposés et testés
+                5. ✅ Stockage persistant configuré
+                6. ✅ Qualité du code vérifiée
 
-            📍 Accès à l'application: http://$(minikube ip --profile=${env.MINIKUBE_PROFILE}):[PORT]/student
-            """
+                📍 Vérifiez l'accès à l'application dans le résumé ci-dessus.
+                """
+            }
         }
 
         failure {
@@ -439,8 +412,8 @@ DOCKERFILE
 
             // Tentative de récupération des logs d'erreur
             sh '''
-                echo "📝 Derniers logs d'erreur:"
-                kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || true
+                echo "📝 Derniers événements Kubernetes:"
+                kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || echo "Aucun événement disponible"
             '''
         }
 
