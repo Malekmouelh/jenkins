@@ -39,7 +39,7 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                sh 'mvn clean verify'  # ← MODIFIÉ ICI (était: compile test)
+                sh 'mvn clean verify'
             }
         }
 
