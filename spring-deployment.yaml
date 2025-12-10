@@ -13,7 +13,7 @@ metadata:
   namespace: devops
 type: Opaque
 data:
-  DB_USER: cm9vdA==  # root
+  DB_USER: cm9vdA==        # root
   DB_PASSWORD: cm9vdHBhc3N3b3Jk  # rootpassword
 ---
 apiVersion: apps/v1
@@ -65,4 +65,5 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 8080
+      nodePort: 30080
   type: NodePort
