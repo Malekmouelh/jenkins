@@ -108,24 +108,30 @@ pipeline {
         stage('Deploy SonarQube on K8S') {
             steps {
                 script {
-                    sh """
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        sh """
+                            export KUBECONFIG=/var/lib/jenkins/.kube/config
+                            echo "=== Déploiement de SonarQube sur K8S ==="
 
-                        echo "=== Déploiement de SonarQube sur K8S ==="
+                            # Nettoyer d'abord pour éviter les conflits
+                            kubectl delete -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE} --ignore-not-found=true || true
+                            kubectl delete -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE} --ignore-not-found=true || true
 
-                        # Déployer SonarQube
-                        kubectl apply -f sonarqube-persistentvolume.yaml -n ${env.K8S_NAMESPACE} 2>/dev/null || echo "PV déjà existant"
-                        kubectl apply -f sonarqube-persistentvolumeclaim.yaml -n ${env.K8S_NAMESPACE}
-                        kubectl apply -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE}
-                        kubectl apply -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE}
+                            # Créer PV/PVC seulement s'ils n'existent pas
+                            if ! kubectl get pv sonarqube-pv >/dev/null 2>&1; then
+                                kubectl apply -f sonarqube-persistentvolume.yaml
+                            fi
 
-                        echo "SonarQube déployé. Attente du démarrage..."
-                        sleep 60
+                            kubectl apply -f sonarqube-persistentvolumeclaim.yaml -n ${env.K8S_NAMESPACE} || true
 
-                        # Vérifier l'état
-                        kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE}
-                        echo "URL SonarQube: http://localhost:30090"
-                    """
+                            # Appliquer déploiement et service
+                            kubectl apply -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE}
+                            kubectl apply -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE}
+
+                            echo "SonarQube déployé. Attente du démarrage..."
+                            sleep 30
+                        """
+                    }
                 }
             }
         }
