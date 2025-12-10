@@ -17,31 +17,51 @@ pipeline {
 
     stages {
         stage('Préparation') {
-            steps {
-                script {
-                    echo "🎯 ATELIER KUBERNETES - ESPRIT UP ASI"
-                }
-                checkout([$class: 'GitSCM', branches: [[name: '*/master']], userRemoteConfigs: [[url: 'https://github.com/Malekmouelh/jenkins.git']]])
-                sh '''
-                    echo "Vérif outils"
-                    command -v kubectl || echo "kubectl missing"
-                    command -v minikube || echo "minikube missing"
-                '''
-            }
+          steps {
+            checkout scm
+            sh '''
+              echo "Vérif outils"
+              command -v kubectl || echo "kubectl missing"
+              command -v minikube || echo "minikube missing"
+            '''
+          }
+        }
+
+        stage('Fix Encoding (quick)') {
+          steps {
+            sh '''
+              # si le fichier existe, détecter son encodage et tenter une conversion vers UTF-8
+              if [ -f src/main/resources/application.properties ]; then
+                echo "Vérification encodage: src/main/resources/application.properties"
+                file -bi src/main/resources/application.properties || true
+
+                # essayer iconv (commence par iso-8859-1/common Windows CP1252)
+                if command -v iconv >/dev/null 2>&1; then
+                  iconv -f ISO-8859-1 -t UTF-8 src/main/resources/application.properties -o /tmp/app.props.utf8 || true
+                  mv /tmp/app.props.utf8 src/main/resources/application.properties || true
+                fi
+
+                # enlever CR (dos2unix)
+                if command -v dos2unix >/dev/null 2>&1; then
+                  dos2unix src/main/resources/application.properties || true
+                fi
+
+                # forcer java encoding sur UTF-8 à la build (voir mvn invocation)
+              else
+                echo "Aucun application.properties dans src/main/resources"
+              fi
+            '''
+          }
         }
 
         stage('Build Application') {
-            steps {
-                sh '''
-                    echo "Build Maven"
-                    mvn -B clean package
-                    ls -la target || true
-                    if ! ls target/*.jar 2>/dev/null; then
-                        echo "Build échoué"
-                        exit 1
-                    fi
-                '''
-            }
+          steps {
+            sh '''
+              echo "=== Build Maven ==="
+              # Force l'encodage à UTF-8 via property pour maven
+              mvn -Dproject.build.sourceEncoding=UTF-8 -Dfile.encoding=UTF-8 -B clean package
+            '''
+          }
         }
 
         stage('Build Docker') {
