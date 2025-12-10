@@ -8,7 +8,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: /mnt/data/sonarqube
+    path: /mnt/sonarqube-data
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

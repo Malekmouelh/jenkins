@@ -22,17 +22,18 @@ pipeline {
         stage('Setup Kubernetes') {
             steps {
                 script {
-                    sh """
+                    sh '''
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
-
                         echo "=== Configuration Kubernetes ==="
 
-                        # Créer le namespace
-                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        # Créer namespace sans validation stricte
+                        kubectl create namespace devops --dry-run=client -o yaml | kubectl apply -f - --validate=false
 
-                        # Vérifier la connexion
+                        # Vérifier
                         kubectl cluster-info
-                    """
+                        echo "Namespace devops status:"
+                        kubectl get namespace devops
+                    '''
                 }
             }
         }
