@@ -1,111 +1,122 @@
 {
   "dashboard": {
     "title": "DevOps Monitoring Dashboard",
+    "tags": ["devops", "kubernetes", "spring-boot", "jenkins"],
+    "timezone": "browser",
     "panels": [
       {
+        "id": 1,
         "title": "CPU Usage",
+        "type": "stat",
         "targets": [
           {
-            "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-            "legendFormat": "{{instance}}"
+            "expr": "system_cpu_usage{application=\"student-management\"}",
+            "legendFormat": "Spring Boot CPU",
+            "refId": "A"
+          },
+          {
+            "expr": "node_cpu_seconds_total{mode=\"idle\"}",
+            "legendFormat": "System CPU Idle",
+            "refId": "B"
           }
         ],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-        "type": "timeseries"
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
       },
       {
+        "id": 2,
         "title": "Memory Usage",
+        "type": "gauge",
         "targets": [
           {
-            "expr": "(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes * 100",
-            "legendFormat": "Used Memory"
+            "expr": "jvm_memory_used_bytes{application=\"student-management\", area=\"heap\"} / jvm_memory_max_bytes{application=\"student-management\", area=\"heap\"} * 100",
+            "legendFormat": "JVM Heap %",
+            "refId": "A"
           }
         ],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-        "type": "timeseries"
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
       },
       {
-        "title": "Jenkins Build Status",
-        "targets": [
-          {
-            "expr": "jenkins_builds_active",
-            "legendFormat": "Active Builds"
-          },
-          {
-            "expr": "jenkins_builds_success_total",
-            "legendFormat": "Successful Builds"
-          },
-          {
-            "expr": "jenkins_builds_failure_total",
-            "legendFormat": "Failed Builds"
-          }
-        ],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-        "type": "timeseries"
-      },
-      {
-        "title": "Spring Boot HTTP Requests",
+        "id": 3,
+        "title": "HTTP Requests",
+        "type": "graph",
         "targets": [
           {
             "expr": "rate(http_server_requests_seconds_count{application=\"student-management\"}[5m])",
-            "legendFormat": "Requests/sec"
+            "legendFormat": "Requests/sec",
+            "refId": "A"
           }
         ],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-        "type": "timeseries"
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
       },
       {
-        "title": "JVM Memory Usage",
+        "id": 4,
+        "title": "Database Connections",
+        "type": "graph",
         "targets": [
           {
-            "expr": "jvm_memory_used_bytes{application=\"student-management\", area=\"heap\"}",
-            "legendFormat": "Heap Used"
+            "expr": "hikaricp_connections_active{application=\"student-management\"}",
+            "legendFormat": "Active Connections",
+            "refId": "A"
           },
           {
-            "expr": "jvm_memory_max_bytes{application=\"student-management\", area=\"heap\"}",
-            "legendFormat": "Heap Max"
+            "expr": "hikaricp_connections_idle{application=\"student-management\"}",
+            "legendFormat": "Idle Connections",
+            "refId": "B"
           }
         ],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-        "type": "timeseries"
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
       },
       {
-        "title": "Kubernetes Pod Status",
+        "id": 5,
+        "title": "JVM Threads",
+        "type": "graph",
         "targets": [
           {
-            "expr": "sum(kube_pod_status_phase{namespace=\"devops\"}) by (phase)",
-            "legendFormat": "{{phase}}"
-          }
-        ],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-        "type": "piechart"
-      },
-      {
-        "title": "Disk Usage",
-        "targets": [
-          {
-            "expr": "100 - ((node_filesystem_avail_bytes{mountpoint=\"/\"} * 100) / node_filesystem_size_bytes{mountpoint=\"/\"})",
-            "legendFormat": "Root Disk Usage %"
-          }
-        ],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-        "type": "gauge"
-      },
-      {
-        "title": "Network Traffic",
-        "targets": [
-          {
-            "expr": "rate(node_network_receive_bytes_total[5m]) * 8",
-            "legendFormat": "Receive"
+            "expr": "jvm_threads_live{application=\"student-management\"}",
+            "legendFormat": "Live Threads",
+            "refId": "A"
           },
           {
-            "expr": "rate(node_network_transmit_bytes_total[5m]) * 8",
-            "legendFormat": "Transmit"
+            "expr": "jvm_threads_daemon{application=\"student-management\"}",
+            "legendFormat": "Daemon Threads",
+            "refId": "B"
           }
         ],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
-        "type": "timeseries"
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "System Metrics",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "node_memory_MemTotal_bytes",
+            "legendFormat": "Total Memory",
+            "refId": "A"
+          },
+          {
+            "expr": "node_memory_MemFree_bytes",
+            "legendFormat": "Free Memory",
+            "refId": "B"
+          },
+          {
+            "expr": "node_filesystem_size_bytes",
+            "legendFormat": "Disk Size",
+            "refId": "C"
+          },
+          {
+            "expr": "node_filesystem_free_bytes",
+            "legendFormat": "Disk Free",
+            "refId": "D"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
       }
-    ]
-  }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    }
+  },
+  "overwrite": true
 }

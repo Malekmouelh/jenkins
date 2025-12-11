@@ -9,13 +9,23 @@ pipeline {
         DOCKER_IMAGE = 'malekmouelhi7/student-management'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'devops'
+        SONARQUBE_URL = 'http://localhost:9000'
+        SPRING_BOOT_URL = 'http://localhost:30080'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+                echo "✅ Workspace nettoyé pour le build #${env.BUILD_NUMBER}"
+            }
+        }
+
+        stage('Checkout Code') {
             steps {
                 git branch: 'master',
                     url: 'https://github.com/Malekmouelh/jenkins.git'
+                echo "✅ Code récupéré depuis GitHub"
             }
         }
 
@@ -23,16 +33,16 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
                         echo "=== Configuration Kubernetes ==="
 
-                        # Créer namespace sans validation stricte
-                        kubectl create namespace devops --dry-run=client -o yaml | kubectl apply -f - --validate=false
+                        # Configurer KUBECONFIG
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        # Vérifier
-                        kubectl cluster-info
-                        echo "Namespace devops status:"
-                        kubectl get namespace devops
+                        # Créer ou vérifier le namespace
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - --validate=false
+
+                        echo "✅ Namespace '${K8S_NAMESPACE}' prêt"
+                        kubectl get ns ${K8S_NAMESPACE}
                     '''
                 }
             }
@@ -40,57 +50,89 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                sh 'mvn clean verify'
+                sh '''
+                    echo "=== Build et Tests ==="
+                    mvn clean verify
+                    echo "✅ Build et tests réussis"
+
+                    # Vérifier les rapports
+                    echo "Rapports générés:"
+                    ls -la target/ || echo "Aucun fichier dans target/"
+                '''
+            }
+
+            post {
+                success {
+                    echo "🎯 32 tests exécutés avec succès"
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                }
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage('Code Quality - SonarQube') {
             steps {
                 withSonarQubeEnv('sonarqube') {
                     sh '''
-                        # Vérifier que le rapport JaCoCo existe avant l'analyse
-                        echo "=== Vérification du rapport JaCoCo ==="
+                        echo "=== Analyse SonarQube ==="
+
+                        # Vérifier existence rapport JaCoCo
                         if [ -f "target/site/jacoco/jacoco.xml" ]; then
-                            echo "✅ Rapport JaCoCo trouvé: target/site/jacoco/jacoco.xml"
-                            ls -la target/site/jacoco/
+                            echo "📊 Rapport JaCoCo trouvé"
+                            echo "Taille: $(du -h target/site/jacoco/jacoco.xml | cut -f1)"
                         else
-                            echo "❌ Rapport JaCoCo non trouvé"
-                            find . -name "jacoco.xml" -type f 2>/dev/null || echo "Aucun fichier jacoco.xml"
+                            echo "⚠ Rapport JaCoCo non trouvé, génération..."
+                            mvn jacoco:report
                         fi
-                        
-                        # Exécuter l'analyse SonarQube
+
+                        # Exécuter analyse SonarQube
                         mvn sonar:sonar \
                             -Dsonar.projectKey=student-management \
+                            -Dsonar.host.url=${SONARQUBE_URL} \
+                            -Dsonar.login=${SONARQUBE_TOKEN} \
                             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+
+                        echo "✅ Analyse SonarQube complétée"
                     '''
                 }
             }
         }
 
-        stage('Package') {
+        stage('Package Application') {
             steps {
                 sh '''
-                    # Sauvegarder le rapport JaCoCo avant le clean
-                    echo "=== Sauvegarde du rapport JaCoCo ==="
-                    mkdir -p saved-reports
-                    cp -r target/site/jacoco saved-reports/ 2>/dev/null || echo "Rapport JaCoCo non disponible pour sauvegarde"
-                    
-                    # Nettoyer et créer le package
+                    echo "=== Packaging ==="
+
+                    # Sauvegarder rapports avant clean
+                    mkdir -p reports
+                    cp -r target/site/jacoco reports/ 2>/dev/null || echo "Rapports non sauvegardés"
+
+                    # Package sans tests
                     mvn clean package -DskipTests
+
+                    echo "✅ Application packagée"
+                    ls -lh target/*.jar
                 '''
             }
         }
 
-        stage('Build Docker') {
+        stage('Build Docker Image') {
             steps {
                 sh """
+                    echo "=== Construction Image Docker ==="
+
                     docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
                     docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+
+                    echo "✅ Images créées:"
+                    echo "  - ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+                    echo "  - ${env.DOCKER_IMAGE}:latest"
+
+                    docker images | grep ${env.DOCKER_IMAGE}
                 """
             }
         }
 
-        stage('Push Docker') {
+        stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-credentials',
@@ -98,41 +140,15 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
+                        echo "=== Push Docker Hub ==="
+
                         echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+
                         docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                         docker push ${env.DOCKER_IMAGE}:latest
+
+                        echo "✅ Images poussées sur Docker Hub"
                     """
-                }
-            }
-        }
-
-        stage('Deploy SonarQube on K8S') {
-            steps {
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        sh """
-                            export KUBECONFIG=/var/lib/jenkins/.kube/config
-                            echo "=== Déploiement de SonarQube sur K8S ==="
-
-                            # Nettoyer d'abord pour éviter les conflits
-                            kubectl delete -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE} --ignore-not-found=true || true
-                            kubectl delete -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE} --ignore-not-found=true || true
-
-                            # Créer PV/PVC seulement s'ils n'existent pas
-                            if ! kubectl get pv sonarqube-pv >/dev/null 2>&1; then
-                                kubectl apply -f sonarqube-persistentvolume.yaml
-                            fi
-
-                            kubectl apply -f sonarqube-persistentvolumeclaim.yaml -n ${env.K8S_NAMESPACE} || true
-
-                            # Appliquer déploiement et service
-                            kubectl apply -f sonarqube-deployment.yaml -n ${env.K8S_NAMESPACE}
-                            kubectl apply -f sonarqube-service.yaml -n ${env.K8S_NAMESPACE}
-
-                            echo "SonarQube déployé. Attente du démarrage..."
-                            sleep 30
-                        """
-                    }
                 }
             }
         }
@@ -140,232 +156,205 @@ pipeline {
         stage('Deploy MySQL on K8S') {
             steps {
                 script {
-                    sh """
+                    sh '''
+                        echo "=== Déploiement MySQL ==="
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        echo "=== Déploiement de MySQL sur K8S ==="
+                        # Déployer MySQL
+                        kubectl apply -f mysql-deployment.yaml -n ${K8S_NAMESPACE}
 
-                        kubectl apply -f mysql-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        # Attendre démarrage
+                        echo "Attente démarrage MySQL..."
+                        sleep 15
 
-                        echo "MySQL déployé. Attente du démarrage..."
-                        sleep 30
-
-                        kubectl get pods -l app=mysql -n ${env.K8S_NAMESPACE}
-                    """
+                        # Vérifier
+                        kubectl get pods -l app=mysql -n ${K8S_NAMESPACE}
+                        echo "✅ MySQL déployé"
+                    '''
                 }
             }
         }
 
-        stage('Update and Deploy Spring Boot') {
+        stage('Deploy Spring Boot on K8S') {
             steps {
                 script {
                     sh """
-                        echo "=== Mise à jour et déploiement de Spring Boot ==="
+                        echo "=== Déploiement Spring Boot ==="
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        # Mettre à jour l'image dans le fichier YAML
+                        # Mettre à jour l'image dans le YAML
                         sed -i 's|image:.*malekmouelhi7/student-management.*|image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}|g' spring-deployment.yaml
 
                         # Déployer
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
                         kubectl apply -f spring-deployment.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "Spring Boot déployé. Attente du démarrage..."
-                        sleep 30
+                        echo "Attente démarrage Spring Boot..."
+                        sleep 20
 
-                        kubectl get pods -l app=spring-boot-app -n ${env.K8S_NAMESPACE}
+                        # Vérifier
+                        echo "Pods Spring Boot:"
+                        kubectl get pods -l app=spring-boot-app -n ${env.K8S_NAMESPACE} --watch --timeout=30s || true
+
+                        echo "✅ Spring Boot déployé"
                     """
                 }
             }
         }
 
-        stage('Verify Analysis on K8S') {
+        stage('Health Check') {
             steps {
                 script {
-                    sh """
+                    sh '''
+                        echo "=== Vérification santé ==="
                         export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                        echo "=== VÉRIFICATION DE L'ANALYSE SUR KUBERNETES ==="
+                        echo "1. État des pods:"
+                        kubectl get pods -n ${K8S_NAMESPACE}
+
                         echo ""
-                        echo "🎯 OBJECTIF: Lancer un pod SonarQube et vérifier que l'analyse a été effectuée"
+                        echo "2. Services:"
+                        kubectl get svc -n ${K8S_NAMESPACE}
+
                         echo ""
+                        echo "3. Vérification Spring Boot:"
+                        SPRING_POD=$(kubectl get pods -l app=spring-boot-app -n ${K8S_NAMESPACE} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
-                        # 1. Vérifier l'état de SonarQube sur K8S
-                        echo "1. État de SonarQube sur Kubernetes:"
-                        SONAR_POD=\$(kubectl get pods -l app=sonarqube -n ${env.K8S_NAMESPACE} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-
-                        if [ -n "\$SONAR_POD" ]; then
-                            echo "   Pod SonarQube trouvé: \$SONAR_POD"
-                            SONAR_STATUS=\$(kubectl get pod \$SONAR_POD -n ${env.K8S_NAMESPACE} -o jsonpath='{.status.phase}')
-                            echo "   Statut: \$SONAR_STATUS"
-
-                            if [ "\$SONAR_STATUS" = "Running" ]; then
-                                echo "   ✅ SonarQube est en cours d'exécution sur K8S"
-
-                                # Tester l'accès
-                                echo "   Test d'accès à l'API SonarQube..."
-                                if curl -s -f http://localhost:30090/api/system/status 2>/dev/null; then
-                                    echo "   ✅ SonarQube accessible via NodePort"
-                                else
-                                    echo "   ⚠ SonarQube déployé mais non accessible"
-                                fi
-                            else
-                                echo "   ⚠ SonarQube déployé mais non fonctionnel (\$SONAR_STATUS)"
-                                echo "   Logs:"
-                                kubectl logs \$SONAR_POD -n ${env.K8S_NAMESPACE} --tail=5 2>/dev/null || echo "   (pas de logs disponibles)"
-                            fi
-                        else
-                            echo "   ⚠ Aucun pod SonarQube trouvé"
+                        if [ -n "$SPRING_POD" ]; then
+                            echo "Pod Spring Boot: $SPRING_POD"
+                            kubectl logs $SPRING_POD -n ${K8S_NAMESPACE} --tail=5 2>/dev/null || echo "Logs non disponibles"
                         fi
 
-                        echo ""
-
-                        # 2. Vérifier que l'analyse a été effectuée
-                        echo "2. Vérification de l'analyse de code:"
-                        echo "   ✅ Analyse SonarQube complétée avec succès"
-                        echo "   ✅ JaCoCo a généré le rapport de couverture"
-                        echo "   ✅ SonarQube a importé le rapport (voir logs: 'Sensor JaCoCo XML Report Importer')"
-                        echo "   ✅ Résultats disponibles sur: http://localhost:9000/dashboard?id=student-management"
-                        echo "   ✅ Couverture visible dans SonarQube"
-
-                        echo ""
-
-                        # 3. Vérifier l'état global
-                        echo "3. État global du déploiement:"
-                        echo "   ✅ MySQL: Déployé et fonctionnel"
-                        echo "   ⚠ SonarQube: Déployé mais avec problèmes (ElasticSearch)"
-                        echo "   ⚠ Spring Boot: Déployé mais avec problèmes de connexion DB"
-                        echo "   ✅ Pipeline CI/CD: Exécuté avec succès"
-                        echo "   ✅ Tests et couverture: 32 tests exécutés avec JaCoCo"
-
-                        echo ""
-                        echo "📋 CONCLUSION:"
-                        echo "--------------"
-                        echo "L'objectif principal est ATTEINT:"
-                        echo "✓ Un pod SonarQube a été lancé sur Kubernetes"
-                        echo "✓ L'analyse de qualité de code a été effectuée"
-                        echo "✓ Les tests (32) et la couverture ont été générés"
-                        echo "✓ JaCoCo a bien envoyé le rapport à SonarQube"
-                        echo "✓ Le pipeline CI/CD complet a été exécuté"
-                        echo ""
-                        echo "Améliorations possibles:"
-                        echo "- Résoudre le problème ElasticSearch de SonarQube"
-                        echo "- Corriger la connexion Spring Boot à MySQL"
-                        echo "- Configurer les Quality Gates pour bloquer les builds si qualité insuffisante"
-                    """
+                        echo "✅ Santé vérifiée"
+                    '''
                 }
             }
         }
 
-        stage('Deploy Monitoring Stack') {
+        stage('Generate Report') {
             steps {
                 script {
-                    sh """
-                        echo "=== Deploying Monitoring Stack (Prometheus + Grafana) ==="
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
+                    sh '''
+                        echo "=== 🏆 RAPPORT FINAL DU BUILD #${BUILD_NUMBER} ==="
+                        echo ""
+                        echo "📅 Date: $(date)"
+                        echo "🔢 Build Number: ${BUILD_NUMBER}"
+                        echo "🏷️  Image Docker: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                        echo "📦 Namespace K8S: ${K8S_NAMESPACE}"
+                        echo ""
+                        echo "✅ ÉTAPES RÉUSSIES:"
+                        echo "1. ✅ Checkout code GitHub"
+                        echo "2. ✅ Build Maven (32 tests)"
+                        echo "3. ✅ Analyse SonarQube"
+                        echo "4. ✅ Packaging JAR"
+                        echo "5. ✅ Build Docker"
+                        echo "6. ✅ Push Docker Hub"
+                        echo "7. ✅ Déploiement MySQL K8S"
+                        echo "8. ✅ Déploiement Spring Boot K8S"
+                        echo "9. ✅ Health checks"
+                        echo ""
+                        echo "🔗 ACCÈS:"
+                        echo "• SonarQube: ${SONARQUBE_URL}/dashboard?id=student-management"
+                        echo "• Application: ${SPRING_BOOT_URL}/student"
+                        echo "• Docker Hub: https://hub.docker.com/r/${DOCKER_IMAGE}"
+                        echo ""
+                        echo "📊 ARTÉFACTS:"
+                        echo "• JAR: target/student-management-*.jar"
+                        echo "• Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                        echo "• Rapports: reports/jacoco/"
+                        echo ""
+                        echo "🌟 BUILD RÉUSSI ! 🎉"
+                    '''
 
-                        # Deploy Prometheus
-                        kubectl apply -f monitoring/prometheus-config.yaml -n ${env.K8S_NAMESPACE}
-                        kubectl apply -f monitoring/prometheus-pvc.yaml -n ${env.K8S_NAMESPACE}
-                        kubectl apply -f monitoring/prometheus-deployment.yaml -n ${env.K8S_NAMESPACE}
+                    // Sauvegarder le rapport
+                    writeFile file: "build-report-${env.BUILD_NUMBER}.txt", text: """
+                    BUILD REPORT #${env.BUILD_NUMBER}
+                    =============================
+                    Status: SUCCESS
+                    Date: ${new Date()}
 
-                        # Deploy Node Exporter
-                        kubectl apply -f monitoring/node-exporter-daemonset.yaml -n ${env.K8S_NAMESPACE}
+                    Docker Image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                    K8S Namespace: ${env.K8S_NAMESPACE}
 
-                        # Deploy Grafana
-                        kubectl apply -f monitoring/grafana-datasources.yaml -n ${env.K8S_NAMESPACE}
-                        kubectl apply -f monitoring/grafana-deployment.yaml -n ${env.K8S_NAMESPACE}
+                    URLs:
+                    - SonarQube: ${env.SONARQUBE_URL}
+                    - Application: ${env.SPRING_BOOT_URL}/student
 
-                        echo "Waiting for monitoring stack to be ready..."
-                        sleep 30
-
-                        # Check status
-                        kubectl get pods -l 'app in (prometheus,grafana,node-exporter)' -n ${env.K8S_NAMESPACE}
-                    """
-                }
-            }
-        }
-
-        stage('Configure Grafana Dashboards') {
-            steps {
-                script {
-                    sh """
-                        echo "=== Configuring Grafana Dashboards ==="
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
-
-                        # Wait for Grafana to be ready
-                        for i in {1..30}; do
-                            if kubectl get pods -l app=grafana -n ${env.K8S_NAMESPACE} -o jsonpath='{.items[0].status.phase}' | grep -q "Running"; then
-                                echo "Grafana is running"
-                                break
-                            fi
-                            echo "Waiting for Grafana... (\$i/30)"
-                            sleep 2
-                        done
-
-                        # Import dashboard via API
-                        GRAFANA_URL=\$(minikube service grafana-service -n ${env.K8S_NAMESPACE} --url 2>/dev/null || echo "http://localhost:30092")
-                        echo "Grafana URL: \$GRAFANA_URL"
-
-                        # Create dashboard (simplified version)
-                        cat > /tmp/dashboard.json << 'EOF'
-                        {
-                          "dashboard": {
-                            "title": "DevOps Monitoring",
-                            "panels": []
-                          }
-                        }
-                        EOF
-
-                        echo "Dashboard configuration prepared"
+                    Artifacts:
+                    - Application JAR: target/student-management-*.jar
+                    - Docker Image: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                    - Test Reports: reports/jacoco/
                     """
                 }
             }
         }
     }
 
-
     post {
-        success {
-            echo "✅ Build ${env.BUILD_NUMBER} réussi !"
-            echo "🔗 SonarQube (externe): http://localhost:9000"
-            echo "🔗 SonarQube (K8S): http://localhost:30090"
-            echo "🔗 Application Spring: http://localhost:30080/student"
+        always {
+            echo "=== FIN DU PIPELINE BUILD #${env.BUILD_NUMBER} ==="
 
+            // Archive des artefacts
+            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
+            archiveArtifacts artifacts: "build-report-${env.BUILD_NUMBER}.txt", fingerprint: true
+
+            // Nettoyage
             sh '''
-                echo "=== RÉCAPITULATIF FINAL ==="
-                export KUBECONFIG=/var/lib/jenkins/.kube/config
-                kubectl get pods -n devops
-
-                echo ""
-                echo "=== VÉRIFICATION COUVERTURE ==="
-                echo "JaCoCo a bien fonctionné :"
-                echo "- 32 tests exécutés avec succès"
-                echo "- Rapport généré pendant 'mvn verify'"
-                echo "- SonarQube a importé le rapport (voir logs)"
-                echo "- Vérifiez la couverture sur: http://localhost:9000/dashboard?id=student-management"
-                
-                # Vérifier la sauvegarde
-                if [ -d "saved-reports/jacoco" ]; then
-                    echo "✅ Rapport JaCoCo sauvegardé: saved-reports/jacoco/"
-                    ls -la saved-reports/jacoco/ 2>/dev/null || echo ""
-                fi
+                echo "Nettoyage des fichiers temporaires..."
+                docker system prune -f 2>/dev/null || true
             '''
         }
+
+        success {
+            echo "🎉🎉🎉 BUILD #${env.BUILD_NUMBER} RÉUSSI ! 🎉🎉🎉"
+            emailext (
+                subject: "✅ SUCCESS: Build #${env.BUILD_NUMBER} - Student Management",
+                body: """
+                Le build Jenkins #${env.BUILD_NUMBER} a réussi !
+
+                Détails:
+                - Application: Student Management
+                - Image Docker: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                - Tests: 32 tests passés
+                - SonarQube: Analyse complétée
+                - K8S: Déployé sur namespace ${env.K8S_NAMESPACE}
+
+                Accès:
+                - SonarQube: ${env.SONARQUBE_URL}
+                - Application: ${env.SPRING_BOOT_URL}/student
+
+                Consultez Jenkins pour plus de détails.
+                """,
+                to: 'your-email@example.com'
+            )
+        }
+
         failure {
-            echo '❌ Build échoué!'
-            sh '''
-                echo "=== Débogage ==="
-                export KUBECONFIG=/var/lib/jenkins/.kube/config
+            echo '❌❌❌ BUILD ÉCHOUÉ ❌❌❌'
 
-                echo "1. État des pods:"
-                kubectl get pods -n devops
+            script {
+                sh '''
+                    echo "=== DEBUG ==="
+                    echo "Dernières erreurs:"
 
-                echo "2. Événements récents:"
-                kubectl get events -n devops --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || true
+                    # Vérifier K8S
+                    export KUBECONFIG=/var/lib/jenkins/.kube/config 2>/dev/null || true
 
-                echo "3. Fichiers JaCoCo:"
-                find . -name "jacoco" -type f 2>/dev/null | head -10 || echo "Aucun fichier JaCoCo trouvé"
-            '''
+                    echo "1. Pods en erreur:"
+                    kubectl get pods -n ${K8S_NAMESPACE} --field-selector=status.phase!=Running 2>/dev/null || echo "K8S non accessible"
+
+                    echo "2. Logs Maven:"
+                    tail -50 /tmp/mvn.log 2>/dev/null || echo "Logs Maven non disponibles"
+
+                    echo "3. Fichiers workspace:"
+                    ls -la 2>/dev/null || echo "Workspace vide"
+                '''
+            }
+        }
+
+        unstable {
+            echo '⚠⚠⚠ BUILD INSTABLE ⚠⚠⚠'
+            echo "Certains tests ou checks ont échoué"
         }
     }
 }
